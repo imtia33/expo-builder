@@ -20,11 +20,22 @@
  */
 
 import type { ReactNode } from 'react'
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignStartHorizontal,
+  AlignStartVertical
+} from 'lucide-react'
 
 import { useProjectStore } from '@/lib/project/store'
 import type { ProjectNode, Screen } from '@/lib/project/types'
 import type { RegistryEntry, StyleSectionId } from '@/expoforge/registry'
 import { cn } from '@/lib/utils'
+import { isGradientPaint, isTokenPaint, type GradientPaint, type TokenPaint } from '@/lib/paint'
+import { alignNodeInParent, type AlignMode } from '@/components/builder/canvas/align'
+import { Tip } from '@/components/builder/toolbar/tip'
 import { CollapsibleSection } from '../collapsible-section'
 import { SectionFields } from '../field-grid'
 import { QuadField } from '../fields/quad-field'
@@ -49,6 +60,14 @@ function offset(style: Record<string, unknown>, axis: 'width' | 'height'): numbe
     const axisValue = (v as Record<string, unknown>)[axis]
     if (typeof axisValue === 'number') return axisValue
   }
+  return undefined
+}
+
+/** Paint-aware color read: solids pass through, gradients/tokens validate. */
+function paint(style: Record<string, unknown>, key: string): string | GradientPaint | TokenPaint | undefined {
+  const v = style[key]
+  if (typeof v === 'string') return v
+  if (isGradientPaint(v) || isTokenPaint(v)) return v
   return undefined
 }
 
@@ -317,7 +336,7 @@ export function StyleTab({ node, entry, screen, className }: StyleTabProps) {
         defaultValue: '400',
         options: FONT_WEIGHT_OPTIONS
       },
-      { kind: 'color', id: 'color', label: 'Color', value: str(style, 'color'), placeholder: 'None' },
+      { kind: 'color', id: 'color', label: 'Color', value: paint(style, 'color'), placeholder: 'None' },
       { kind: 'number', id: 'lineHeight', label: 'Line height', value: num(style, 'lineHeight'), min: 0, step: 1 },
       { kind: 'number', id: 'letterSpacing', label: 'Tracking', value: num(style, 'letterSpacing'), step: 0.1 },
       {
@@ -350,7 +369,7 @@ export function StyleTab({ node, entry, screen, className }: StyleTabProps) {
     id: 'style-appearance',
     title: 'Appearance',
     entries: [
-      { kind: 'color', id: 'backgroundColor', label: 'Fill', value: str(style, 'backgroundColor'), placeholder: 'None' },
+      { kind: 'color', id: 'backgroundColor', label: 'Fill', value: paint(style, 'backgroundColor'), placeholder: 'None', gradient: true },
       {
         kind: 'slider',
         id: '__opacity',
@@ -367,7 +386,7 @@ export function StyleTab({ node, entry, screen, className }: StyleTabProps) {
         columns: 2,
         fields: [
           { kind: 'number', id: 'borderWidth', label: 'Border width', value: num(style, 'borderWidth'), glyph: 'B', min: 0, step: 1 },
-          { kind: 'color', id: 'borderColor', label: 'Border color', value: str(style, 'borderColor'), placeholder: 'None' }
+          { kind: 'color', id: 'borderColor', label: 'Border color', value: paint(style, 'borderColor'), placeholder: 'None' }
         ]
       },
       { kind: 'select', id: 'overflow', label: 'Overflow', value: str(style, 'overflow'), defaultValue: 'visible', options: OVERFLOW_OPTIONS }
@@ -378,7 +397,7 @@ export function StyleTab({ node, entry, screen, className }: StyleTabProps) {
   const isIOS = globalPlatform === 'ios'
   const effectsEntries: PanelSection['entries'] = isIOS
     ? [
-        { kind: 'color', id: 'shadowColor', label: 'Shadow', value: str(style, 'shadowColor'), placeholder: 'None' },
+        { kind: 'color', id: 'shadowColor', label: 'Shadow', value: paint(style, 'shadowColor'), placeholder: 'None' },
         {
           id: '__shadow-offset',
           columns: 2,
@@ -428,7 +447,15 @@ export function StyleTab({ node, entry, screen, className }: StyleTabProps) {
   /* ── Assemble in registry order; Spacing is custom (quads). ── */
   const SECTION_BUILDERS: Record<StyleSectionId, ReactNode> = {
     layout: (
-      <PanelSectionView key="layout" section={layoutSection} onFieldChange={handleFieldChange} onScrubStart={beginGesture} onScrubEnd={endGesture} />
+      <LayoutSectionView
+        key="layout"
+        section={layoutSection}
+        nodeId={node.id}
+        alignable={mode === 'absolute' && !node.locked}
+        onFieldChange={handleFieldChange}
+        onScrubStart={beginGesture}
+        onScrubEnd={endGesture}
+      />
     ),
     spacing: (
       <SpacingSection
@@ -476,6 +503,73 @@ export function StyleTab({ node, entry, screen, className }: StyleTabProps) {
       {entry.styleSections.map((sectionId) => SECTION_BUILDERS[sectionId])}
       <div className="h-6 shrink-0" aria-hidden="true" />
     </div>
+  )
+}
+
+/* ─── Layout: align-in-parent row above the fields (open-pencil PositionSection) ── */
+
+interface LayoutSectionViewProps {
+  section: PanelSection
+  nodeId: string
+  /** Absolute + unlocked → alignment actions apply. */
+  alignable: boolean
+  onFieldChange: (sectionId: string, fieldId: string, value: FieldChangeValue) => void
+  onScrubStart?: () => void
+  onScrubEnd?: () => void
+}
+
+/**
+ * Align-to-parent toolbar (open-pencil PositionSection row: 3+3 icon buttons,
+ * justify-between). Single selection → aligns within the coordinate parent
+ * (Figma semantics); distribution needs multi-select, which the selection
+ * model deliberately does not have yet.
+ */
+const ALIGN_BUTTONS: { mode: AlignMode; label: string; Icon: typeof AlignStartVertical }[] = [
+  { mode: 'left', label: 'Align left', Icon: AlignStartVertical },
+  { mode: 'centerH', label: 'Align horizontal centers', Icon: AlignCenterVertical },
+  { mode: 'right', label: 'Align right', Icon: AlignEndVertical },
+  { mode: 'top', label: 'Align top', Icon: AlignStartHorizontal },
+  { mode: 'middleV', label: 'Align vertical centers', Icon: AlignCenterHorizontal },
+  { mode: 'bottom', label: 'Align bottom', Icon: AlignEndHorizontal }
+]
+
+function LayoutSectionView({ section, nodeId, alignable, onFieldChange, onScrubStart, onScrubEnd }: LayoutSectionViewProps) {
+  return (
+    <CollapsibleSection id={section.id} title={section.title} onReset={section.onReset}>
+      {alignable && (
+        <div className="mb-1.5 flex items-center justify-between" role="group" aria-label="Align to parent">
+          <div className="flex gap-0.5">
+            {ALIGN_BUTTONS.slice(0, 3).map(({ mode, label, Icon }) => (
+              <Tip key={mode} label={label}>
+                <button
+                  type="button"
+                  aria-label={label}
+                  className="flex size-6 cursor-pointer items-center justify-center rounded text-muted transition-colors outline-none hover:bg-hover hover:text-surface focus-visible:ring-1 focus-visible:ring-panel-focus"
+                  onClick={() => alignNodeInParent(nodeId, mode)}
+                >
+                  <Icon className="size-3.5" aria-hidden />
+                </button>
+              </Tip>
+            ))}
+          </div>
+          <div className="flex gap-0.5">
+            {ALIGN_BUTTONS.slice(3).map(({ mode, label, Icon }) => (
+              <Tip key={mode} label={label}>
+                <button
+                  type="button"
+                  aria-label={label}
+                  className="flex size-6 cursor-pointer items-center justify-center rounded text-muted transition-colors outline-none hover:bg-hover hover:text-surface focus-visible:ring-1 focus-visible:ring-panel-focus"
+                  onClick={() => alignNodeInParent(nodeId, mode)}
+                >
+                  <Icon className="size-3.5" aria-hidden />
+                </button>
+              </Tip>
+            ))}
+          </div>
+        </div>
+      )}
+      <SectionFields section={section} onFieldChange={onFieldChange} onScrubStart={onScrubStart} onScrubEnd={onScrubEnd} />
+    </CollapsibleSection>
   )
 }
 

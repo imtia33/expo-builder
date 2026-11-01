@@ -193,6 +193,9 @@ const RESIZE_MODES = ['cover', 'contain', 'stretch', 'center', 'repeat'] as cons
  * Node renderer — per-type RNW mapping
  * ──────────────────────────────────────────────────────────────────────────── */
 
+import { useProjectStore } from '@/lib/project/store'
+import { applyPaints, isGradientPaint, paletteResolver, paintSwatchBackground } from '@/lib/paint'
+
 interface PreviewNodeProps {
   node: ProjectNode
   childIndex: ChildIndex
@@ -206,13 +209,24 @@ function renderChildNodes(parentId: string, childIndex: ChildIndex, platform: Pl
 }
 
 function PreviewNode({ node, childIndex, platform }: PreviewNodeProps): ReactNode {
+  /* Paint resolution (Phase 1): theme tokens bind to the project palette,
+   * gradients (backgroundColor) become RNW CSS backgroundImage. Subscribing
+   * here means palette edits + light/dark toggles re-render the tree. Hooks
+   * run BEFORE the early returns below (rules of hooks — hidden/unknown
+   * nodes must not change the hook count). */
+  const palette = useProjectStore((s) => s.data.theme?.colors)
+  const themeMode = useProjectStore((s) => s.ui.themeMode)
+
   // Hidden nodes are skipped entirely (subtree included).
   if (node.hidden) return null
 
   const entry = getEntry(node.type)
   if (!entry) return null
 
-  const { props, style } = resolveNode(entry, node, platform)
+  const { props, style: rawStyle } = resolveNode(entry, node, platform)
+  /* Gradient fills render only on View-like containers (view/scrollview/\n   * blurview + unknown future containers); on Text/Button/etc they degrade to\n   * the first stop color — the exact rule the code generator applies, so the\n   * canvas and generated code can never drift. */
+  const gradientCapable = node.type === 'view' || node.type === 'scrollview' || node.type === 'blurview' || (entry.children === 'any' && node.type !== 'button')
+  const style = applyPaints(rawStyle, paletteResolver(palette), themeMode, gradientCapable)
   // Only container-policy entries ('any') can host children; leaf and
   // text-content components never render child nodes (RN rules).
   const children = entry.children === 'any' ? renderChildNodes(node.id, childIndex, platform) : null
@@ -458,10 +472,21 @@ export interface ScreenTreePreviewProps {
 export function ScreenTreePreview({ screen, nodes, platform }: ScreenTreePreviewProps) {
   const childIndex = useMemo(() => buildChildIndex(nodes, screen.id), [nodes, screen.id])
   const roots = childIndex.get(null) ?? []
+  /* Screen background is a paint value: solid hex, theme token, or gradient
+   * (CSS backgroundImage on the root View; the artboard div behind shows the
+   * same CSS as a fallback). */
+  const palette = useProjectStore((s) => s.data.theme?.colors)
+  const themeMode = useProjectStore((s) => s.ui.themeMode)
+  const bgCss = paintSwatchBackground(screen.background, paletteResolver(palette), themeMode)
+  const rootStyle: Record<string, unknown> = { flex: 1 }
+  if (bgCss) {
+    if (isGradientPaint(screen.background)) rootStyle.backgroundImage = bgCss
+    else rootStyle.backgroundColor = bgCss
+  }
   return (
     // Root View: fills the device-frame content area, carries the screen
     // background, and deliberately has NO testID (it is not a node).
-    <View style={{ flex: 1, backgroundColor: screen.background }}>
+    <View style={rootStyle}>
       {roots.map((node) => (
         <PreviewNode key={node.id} node={node} childIndex={childIndex} platform={platform} />
       ))}

@@ -136,11 +136,17 @@ export function ScreenTab({ screen, className }: ScreenTabProps) {
       case 'safe-bottom':
         setScreenSafeArea(screen.id, { bottom: value === true })
         return
-      case 'background':
-        // ColorField Clear ('') would emit an invalid empty literal — restore the
-        // canonical screen default instead (screens always carry a background).
-        setScreenBackground(screen.id, value === '' ? '#FFFFFF' : String(value))
+      case 'background': {
+        // Paint value (solid hex / theme token / gradient) passes through;
+        // ColorField Clear ('') restores the canonical default (screens always
+        // carry a background).
+        if (value === '') {
+          setScreenBackground(screen.id, '#FFFFFF')
+          return
+        }
+        setScreenBackground(screen.id, value as string | { token: string } | { type: 'linear-gradient'; angle: number; stops: { color: string; position: number }[] } | { type: 'radial-gradient'; stops: { color: string; position: number }[] })
         return
+      }
       case 'canvas-x':
         moveScreenCanvas(screen.id, Number(value), screen.y)
         return
@@ -175,7 +181,7 @@ export function ScreenTab({ screen, className }: ScreenTabProps) {
     id: 'screen-canvas',
     title: 'Canvas',
     entries: [
-      { kind: 'color', id: 'background', label: 'Background', value: screen.background },
+      { kind: 'color', id: 'background', label: 'Background', value: screen.background as string, gradient: true },
       {
         id: '__canvas-pos',
         columns: 2,

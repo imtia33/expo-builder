@@ -19,6 +19,7 @@ import {
 import { LeftPanel } from '@/components/builder/left-panel'
 import { RightPanel } from '@/components/builder/right-panel'
 import { BuilderToolbar, useToolbarShortcuts, type ToolbarTool } from '@/components/builder/toolbar'
+import { TipProvider } from '@/components/builder/toolbar/tip'
 import { CanvasHost, projectBoundsActive, projectBoundsAll } from '@/components/builder/screens'
 
 export default function Home() {
@@ -49,19 +50,21 @@ export default function Home() {
   const onPlaced = useCallback(() => setTool('select'), [])
 
   return (
-    <div id="expoforge-root">
-      <WorkspaceLayout
-        topBar={<TopBar onHelp={() => setHelpOpen(true)} />}
-        leftPanel={<LeftPanel />}
-        canvas={
-          <div className="relative h-full w-full">
-            <CanvasHost activeTool={canvasTool} insertTool={insertTool} onPlaced={onPlaced} />
-            <BuilderToolbar tool={tool} onToolChange={setTool} />
-          </div>
-        }
-        rightPanel={<RightPanel />}
-      />
-      <KeyboardHelp open={helpOpen} onOpenChange={setHelpOpen} />
-    </div>
+    <TipProvider>
+      <div id="expoforge-root">
+        <WorkspaceLayout
+          topBar={<TopBar onHelp={() => setHelpOpen(true)} />}
+          leftPanel={<LeftPanel />}
+          canvas={
+            <div className="relative h-full w-full">
+              <CanvasHost activeTool={canvasTool} insertTool={insertTool} onPlaced={onPlaced} />
+              <BuilderToolbar tool={tool} onToolChange={setTool} />
+            </div>
+          }
+          rightPanel={<RightPanel />}
+        />
+        <KeyboardHelp open={helpOpen} onOpenChange={setHelpOpen} />
+      </div>
+    </TipProvider>
   )
 }

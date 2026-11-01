@@ -1,24 +1,28 @@
 'use client'
+
 /*
- * SelectionOverlay — screen-space chrome for the selected node (v3 rework).
+ * SelectionOverlay — screen-space chrome for the selected node (v3 rework),
+ * Phase-1 alignment with open-pencil's canvas chrome values (§7 of the study,
+ * packages/core/src/constants.ts):
  *
- * v2 rendered this overlay INSIDE the pan/zoom transformed layer, dividing
- * every size by zoom so handles/guides kept a constant on-screen size —
- * which also meant the whole overlay rasterized through the (previously
- * will-change-cached) scaled layer: blurry chrome at high zoom. v3 moves it
- * into the unscaled screen-space chrome layer (rendered via a portal from
- * ScreenArtboard, see canvas/chrome-layer.tsx):
+ *   - outline: 1px screen-px #3B82F6 (SELECTION_COLOR, stroke 1/zoom in Skia)
+ *   - handles: 6×6px WHITE-FILLED SQUARES stroked 1px in the selection color
+ *     at the 4 edges + 4 corners (HANDLE_HALF_SIZE = 3); hit radius ~8px here
+ *     (open-pencil uses 6 — DOM hit areas are padded for comfortable grabbing)
+ *   - size pill: 18px tall, radius 4px, 6px x-padding, filled selection color,
+ *     white 10px text (SIZE_* constants), under the selection while resizing
+ *   - position pill (move): same pill above the selection while dragging
+ *   - hover outline (NodeHoverOutline): 1px selection-color rect, no handles
  *
- *   - Node rects are still measured in artboard-local dp by useNodeMeasure
- *     (DOM-truth, scroll/transform-safe — unchanged). This component
- *     converts them with the viewport math
- *     `screenPoint = (screen.x + rect.left) * zoom + pan`, and multiplies
- *     sizes by zoom — so the OUTLINE tracks the node at every zoom while
- *     handles, guides, pills and hint text stay constant screen px (crisp
- *     at 25%–400%).
- *   - Guide positions keep the v2 semantics: guides are drawn at the node's
- *     coordinate-container-local positions, interpreted in artboard-local
- *     space (the v2 overlay rendered them at the same effective point).
+ * v3 architecture note (unchanged): node rects are measured in artboard-local
+ * dp by useNodeMeasure (DOM-truth, scroll/transform-safe). This component
+ * converts them with `screenPoint = (screen.x + rect.left) * zoom + pan` and
+ * multiplies sizes by zoom — the OUTLINE tracks the node at every zoom while
+ * handles, guides, pills stay constant screen px (crisp at 25%–400%).
+ *
+ * No rotation handle: the data model has no transform rotation (RN layouts in
+ * the reference apps don't rotate containers), so the 24px-above rotation
+ * stalk from open-pencil is intentionally not ported.
  *
  * Gesture wiring is unchanged: resize handles still call
  * onHandlePointerDown / handleMoveProps from useNodeEdit — only the DIVS
@@ -35,16 +39,34 @@ import { useNodeMeasure } from './measure'
 import type { ResizeHandleId, ResizeLive } from './node-edit'
 import type { SnapGuides } from './snap'
 
-/** Visual handle size in screen px. */
-const HANDLE_DOT_PX = 4
-/** Hit area in screen px (larger than the dot for easy grabbing). */
-const HANDLE_HIT_PX = 7
-/** Selection outline weight in screen px. */
-const OUTLINE_PX = 2
+/** Visual handle size in screen px (open-pencil HANDLE_HALF_SIZE = 3 → 6×6). */
+const HANDLE_SQUARE_PX = 6
+/** Hit area in screen px (larger than the square for easy grabbing). */
+const HANDLE_HIT_PX = 8
+/** Selection outline weight in screen px (open-pencil: 1px screen stroke). */
+const OUTLINE_PX = 1
 /** Guide line weight in screen px. */
 const GUIDE_PX = 1
-/** Overlay text (chips/pills) in screen px. */
+/** Overlay text (chips/pills) in screen px (open-pencil SIZE text = 10px). */
 const CHIP_FONT_PX = 10
+/** open-pencil size pill: 18px tall, radius 4, 6px x-padding, accent fill. */
+const PILL_HEIGHT_PX = 18
+const PILL_RADIUS_PX = 4
+const PILL_PADDING_X_PX = 6
+
+/** Shared pill chrome (size + position readouts) — open-pencil SIZE_* style. */
+function measurePillStyle(): React.CSSProperties {
+  return {
+    height: PILL_HEIGHT_PX,
+    padding: `0 ${PILL_PADDING_X_PX}px`,
+    borderRadius: PILL_RADIUS_PX,
+    background: SELECTION_COLOR,
+    color: '#fff',
+    fontSize: CHIP_FONT_PX,
+    lineHeight: 1,
+    fontVariantNumeric: 'tabular-nums'
+  }
+}
 
 interface HandleDef {
   id: ResizeHandleId
@@ -62,6 +84,8 @@ export interface SelectionOverlayProps {
   guides: SnapGuides | null
   /** Live size readout while resizing. */
   resizeLive: ResizeLive | null
+  /** Live position readout while moving (dp, artboard-local). */
+  moveLive: { left: number; top: number } | null
   onHandlePointerDown: (e: React.PointerEvent<HTMLDivElement>, handle: ResizeHandleId, nodeId: string) => void
   /** Shared pointermove/up props for handle elements. */
   handleMoveProps: {
@@ -76,6 +100,7 @@ export function SelectionOverlay({
   nodeId,
   guides,
   resizeLive,
+  moveLive,
   onHandlePointerDown,
   handleMoveProps
 }: SelectionOverlayProps) {
@@ -131,6 +156,7 @@ export function SelectionOverlay({
       ? `${resizeLive.width}`
       : `${resizeLive.width} × ${resizeLive.height}`
     : null
+  const positionLabel = moveLive ? `${moveLive.left}, ${moveLive.top}` : null
 
   /* Guide geometry: container-local dp positions interpreted artboard-local
    * (v2 semantics), converted with the same viewport math as the outline. */
@@ -142,7 +168,7 @@ export function SelectionOverlay({
 
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 z-20 select-none">
-      {/* Outline (measured rect) — tracks the node at every zoom. */}
+      {/* Outline (measured rect) — 1px screen stroke, tracks the node at every zoom. */}
       <div
         className="absolute"
         style={{
@@ -183,7 +209,8 @@ export function SelectionOverlay({
         />
       ))}
 
-      {/* Resize handles — 4px dots on 7px hit areas, constant on-screen. */}
+      {/* Resize handles — 6×6px white squares, 1px selection stroke,
+          constant on-screen (open-pencil drawHandle). */}
       {handles.map((h) => (
         <div
           key={h.id}
@@ -202,12 +229,12 @@ export function SelectionOverlay({
           {...handleMoveProps}
         >
           <div
-            className="rounded-full"
+            className="rounded-[1px]"
             style={{
-              width: HANDLE_DOT_PX,
-              height: HANDLE_DOT_PX,
+              width: HANDLE_SQUARE_PX,
+              height: HANDLE_SQUARE_PX,
               background: '#fff',
-              boxShadow: `0 0 0 1px ${SELECTION_COLOR}`
+              boxShadow: `0 0 0 ${OUTLINE_PX}px ${SELECTION_COLOR}`
             }}
           />
         </div>
@@ -231,23 +258,58 @@ export function SelectionOverlay({
         </div>
       )}
 
-      {/* Size pill during resize. */}
+      {/* Position pill during move (open-pencil shows x,y while dragging). */}
+      {positionLabel && !hint && (
+        <div
+          className="absolute left-1/2 flex -translate-x-1/2 -translate-y-full items-center whitespace-nowrap"
+          style={{ top: top - 6, ...measurePillStyle() }}
+        >
+          {positionLabel}
+        </div>
+      )}
+
+      {/* Size pill during resize — accent-filled, white 10px text (open-pencil SIZE_*). */}
       {sizeLabel && (
         <div
-          className={cn('absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded')}
-          style={{
-            top: top + height + 4,
-            fontSize: CHIP_FONT_PX,
-            lineHeight: 1.2,
-            padding: '2px 5px',
-            background: 'rgba(30,30,30,0.92)',
-            color: '#f0f0f0',
-            fontVariantNumeric: 'tabular-nums'
-          }}
+          className={cn('absolute left-1/2 flex -translate-x-1/2 items-center whitespace-nowrap')}
+          style={{ top: top + height + 6, ...measurePillStyle() }}
         >
           {sizeLabel}
         </div>
       )}
     </div>
+  )
+}
+
+/* ── hover outline ──────────────────────────────────────────────────────── */
+
+/**
+ * 1px selection-color outline over the node currently hovered on the canvas
+ * (open-pencil hover outline). Rendered per artboard in edit mode, never for
+ * the already-selected node (the SelectionOverlay owns that rect).
+ */
+export function NodeHoverOutline({ screen, nodeId }: { screen: Screen; nodeId: string }) {
+  const rect = useNodeMeasure(screen.id, nodeId)
+  const panX = useCanvasViewport((s) => s.panX)
+  const panY = useCanvasViewport((s) => s.panY)
+  const zoom = useCanvasViewport((s) => s.zoom)
+
+  if (!rect) return null
+  const left = (screen.x + rect.left) * zoom + panX
+  const top = (screen.y + rect.top) * zoom + panY
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute"
+      style={{
+        left,
+        top,
+        width: rect.width * zoom,
+        height: rect.height * zoom,
+        outline: `${OUTLINE_PX}px solid ${SELECTION_COLOR}`,
+        outlineOffset: 0
+      }}
+    />
   )
 }

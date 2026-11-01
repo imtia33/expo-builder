@@ -21,8 +21,12 @@
 import type { ProjectNode } from '@/lib/project/types'
 import type { TreeNode } from '@/lib/project/store'
 
+import { getEntry } from '@/expoforge/registry'
+import { isGradientPaint } from '@/lib/paint'
+
 import { fieldDefault, resolveEntry } from './registry'
 import type { NormalizedEntry } from './registry'
+import { gradientAttrs, newPaintUsage, paintsForCodegen, type PaintUsage } from './paint'
 import { orderedStyle, splitTypography } from './style'
 import { el, elChild, styleAttr, textChild } from './jsx'
 import type { JsxAttr, JsxChild, JsxElement } from './jsx'
@@ -30,6 +34,13 @@ import type { ImportCollector } from './imports'
 
 export interface EmitContext {
   imports: ImportCollector
+  /** Tracks theme-token usage so the screen file adds useTheme exactly when needed. */
+  paint: PaintUsage
+}
+
+/** Fresh context for one file (renderScreenFile). */
+export function newEmitContext(imports: ImportCollector): EmitContext {
+  return { imports, paint: newPaintUsage() }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -181,7 +192,37 @@ function emitDefault(node: ProjectNode, entry: NormalizedEntry, childEls: JsxEle
     }
   }
 
-  const style = orderedStyle(node.style)
+  /* Gradient fill on a CONTAINER → the element becomes an expo-linear-gradient
+   * <LinearGradient> wrapper (same emission as the lineargradient entry):
+   * colors/locations/start/end from the paint, remaining style inline,
+   * children inside. Non-containers degrade to the first stop color via
+   * paintsForCodegen — mirroring the preview's gradient-capability rule. */
+  const fill = node.style.backgroundColor
+  const containerPolicy = getEntry(node.type)?.children === 'any'
+  if (isGradientPaint(fill) && containerPolicy) {
+    ctx.imports.addNamed('expo-linear-gradient', 'LinearGradient')
+    const g = gradientAttrs(fill)
+    const rest = { ...node.style, backgroundColor: undefined }
+    const gradAttrs: JsxAttr[] = [
+      { name: 'colors', value: { kind: 'raw', value: g.colors } },
+      ...(g.locations ? [{ name: 'locations', value: { kind: 'raw' as const, value: g.locations } }] : []),
+      { name: 'start', value: { kind: 'raw', value: g.start } },
+      { name: 'end', value: { kind: 'raw', value: g.end } }
+    ]
+    const style = orderedStyle(paintsForCodegen(rest, ctx.paint))
+    if (Object.keys(style).length > 0) gradAttrs.push(styleAttr(style))
+    const children: JsxChild[] = []
+    const textField = entry.fields.find((x) => x.type === 'text')
+    if (textField) {
+      const explicit = node.props[textField.key]
+      const value = explicit === undefined || explicit === null ? (textField.default ?? '') : explicit
+      children.push(textChild(String(value)))
+    }
+    for (const c of childEls) children.push(elChild(c))
+    return el('LinearGradient', gradAttrs, children)
+  }
+
+  const style = orderedStyle(paintsForCodegen(node.style, ctx.paint))
   if (Object.keys(style).length > 0) attrs.push(styleAttr(style))
 
   const children: JsxChild[] = []
@@ -238,7 +279,7 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
   const variant = String(pick(node, entry, 'variant', 'primary'))
   const preset = BUTTON_VARIANT_BASE[variant] ?? BUTTON_VARIANT_BASE.ghost ?? { box: {}, label: {} }
 
-  const { container, typography } = splitTypography(node.style)
+  const { container, typography } = splitTypography(paintsForCodegen(node.style, ctx.paint))
   const boxStyle = orderedStyle({ ...preset.box, ...container })
   const labelStyle = orderedStyle({ ...preset.label, ...typography })
 
@@ -278,7 +319,7 @@ function emitDivider(node: ProjectNode, entry: NormalizedEntry, childEls: JsxEle
     axis === 'vertical'
       ? { width: thickness, height: length, backgroundColor: color }
       : { height: thickness, width: length, backgroundColor: color }
-  const style = orderedStyle({ ...visual, ...node.style })
+  const style = orderedStyle(paintsForCodegen({ ...visual, ...node.style }, ctx.paint))
   const attrs: JsxAttr[] = Object.keys(style).length > 0 ? [styleAttr(style)] : []
   return el(entry.component, attrs, childEls.map((c) => elChild(c)))
 }
@@ -307,7 +348,7 @@ function emitLinearGradient(node: ProjectNode, entry: NormalizedEntry, childEls:
     { name: 'start', value: { kind: 'raw', value: start } },
     { name: 'end', value: { kind: 'raw', value: end } },
   ]
-  const style = orderedStyle(node.style)
+  const style = orderedStyle(paintsForCodegen(node.style, ctx.paint))
   if (Object.keys(style).length > 0) attrs.push(styleAttr(style))
   return el(entry.component, attrs, childEls.map((c) => elChild(c)))
 }
@@ -338,7 +379,7 @@ function emitBlurView(node: ProjectNode, entry: NormalizedEntry, childEls: JsxEl
     attrFromValue('intensity', typeof intensity === 'number' ? intensity : Number(intensity) || 50),
     { name: 'tint', value: { kind: 'string', value: tint } },
   ]
-  const style = orderedStyle(node.style)
+  const style = orderedStyle(paintsForCodegen(node.style, ctx.paint))
   if (Object.keys(style).length > 0) attrs.push(styleAttr(style))
   return el(entry.component, attrs, childEls.map((c) => elChild(c)))
 }

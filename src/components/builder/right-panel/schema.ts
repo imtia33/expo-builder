@@ -13,12 +13,14 @@
  * already wired through every control.
  */
 
+import type { GradientPaint, TokenPaint } from '@/lib/paint'
+
 /** Sentinel for "values differ across the selection" (ported open-pencil rule). */
 export const MIXED = Symbol('mixed')
 export type MixedValue<T> = T | typeof MIXED
 
-/** Values a field control can commit. */
-export type FieldChangeValue = string | number | boolean
+/** Values a field control can commit (paint objects for color fields). */
+export type FieldChangeValue = string | number | boolean | GradientPaint | TokenPaint
 
 export interface FieldOption {
   value: string
@@ -78,10 +80,12 @@ export interface SegmentedFieldSpec extends FieldBase {
 
 export interface ColorFieldSpec extends FieldBase {
   kind: 'color'
-  /** Hex literal ('#rrggbb' / '#rrggbbaa') or '' for "none". */
-  value?: MixedValue<string>
+  /** Paint value: solid hex ('' = none), gradient, or theme token. */
+  value?: MixedValue<string | GradientPaint | TokenPaint>
   /** Ghost label for the unset state (e.g. the registry default hex). */
   placeholder?: string
+  /** Allow gradient fills (only container backgrounds in RN — backgroundColor). */
+  gradient?: boolean
 }
 
 export interface SliderFieldSpec extends FieldBase {

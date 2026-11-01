@@ -2,18 +2,27 @@
 
 /*
  * Project tab — the document-level inspector shown when nothing is selected:
- * project name, counts, a nav overview (each group row selects the group), the
- * routes summary, and the "add structure" hint pointing at the left panel.
+ * project name, counts, the THEME palette (Phase 1: plain-TS tokens, light/
+ * dark pairs — every color field can bind to them; codegen emits
+ * constants/theme.ts + hooks/useTheme.ts), a nav overview (each group row
+ * selects the group), the routes summary, and the "add structure" hint.
  */
+
+import { useState } from 'react'
 
 import { SlotIcon, type IconSlot } from '@/components/builder/icons/slots'
 
 import { panelFieldBase } from '@/app/theme/panel/field/base'
+import inputTheme from '@/app/theme/input/input'
+import { tv } from 'tailwind-variants'
 import { screensInBucket, sortedGroups, useProjectStore } from '@/lib/project/store'
 import type { NavKind } from '@/lib/project/types'
 import { cn } from '@/lib/utils'
+import { ColorField } from '../fields/color-field'
 import { SectionStack } from './props-tab'
 import type { FieldChangeValue, PanelSection } from '../schema'
+
+const inputStyles = tv(inputTheme)
 
 const NAV_KIND_META: Record<NavKind, { label: string; icon: IconSlot }> = {
   tabs: { label: 'Tabs', icon: 'inspector.project-grid' },
@@ -63,6 +72,9 @@ export function ProjectTab({ className }: ProjectTabProps) {
           <StatBlock label="Components" value={componentCount} />
         </div>
       </section>
+
+      {/* ── Theme (Phase 1: plain-TS palette; tokens bind color fields) ── */}
+      <ThemeSection />
 
       {/* ── Nav overview ── */}
       <section className="border-b border-border px-3 pb-3" aria-label="Navigation overview">
@@ -151,5 +163,108 @@ function StatBlock({ label, value }: { label: string; value: number }) {
       </span>
       <span className="text-[10px] text-muted">{label}</span>
     </div>
+  )
+}
+
+/* ── Theme palette editor ───────────────────────────────────────────────── */
+
+/**
+ * Theme tokens — light/dark pairs (the reference-app pattern: TravelMate
+ * constants/theme.js, Expo default template). Color fields bind to tokens via
+ * the picker's "Theme tokens" row; codegen emits constants/theme.ts +
+ * hooks/useTheme.ts (plain TS, NO NativeWind/uniwind).
+ */
+function ThemeSection() {
+  const colors = useProjectStore((s) => s.data.theme?.colors) ?? {}
+  const setThemeToken = useProjectStore((s) => s.setThemeToken)
+  const deleteThemeToken = useProjectStore((s) => s.deleteThemeToken)
+  const themeMode = useProjectStore((s) => s.ui.themeMode)
+  const [draftName, setDraftName] = useState('')
+  const names = Object.keys(colors).sort()
+  const validName = /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(draftName.trim())
+
+  return (
+    <section className="border-b border-border px-3 pb-3" aria-label="Theme palette">
+      <p className="flex h-8 min-w-0 items-center gap-1.5 text-[11px] font-semibold text-surface">Theme</p>
+      <p className="mb-1.5 px-1 text-[10px] leading-relaxed text-muted">
+        Color tokens for the whole app. Bind any color field to a token from its picker; generated code uses them via useTheme() (no NativeWind). The top-bar Light/Dark toggle previews each mode.
+      </p>
+      {names.length === 0 ? (
+        <p className="px-1 text-[11px] text-muted">No tokens — add one below.</p>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-1">
+          {names.map((name) => {
+            const pair = colors[name]
+            return (
+              <div key={name} className="flex min-w-0 items-center gap-1">
+                <span className="min-w-0 flex-1 truncate px-1 text-[11px] text-surface" title={name}>
+                  {name}
+                </span>
+                <ColorField
+                  field={{ kind: 'color', id: `theme-${name}-light`, label: `${name} light`, value: pair.light }}
+                  className="w-16 shrink-0"
+                  onChange={(value) => {
+                    if (typeof value === 'string' && value) setThemeToken(name, { light: value, dark: pair.dark })
+                  }}
+                />
+                <ColorField
+                  field={{ kind: 'color', id: `theme-${name}-dark`, label: `${name} dark`, value: pair.dark }}
+                  className="w-16 shrink-0"
+                  onChange={(value) => {
+                    if (typeof value === 'string' && value) setThemeToken(name, { light: pair.light, dark: value })
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={`Delete token ${name}`}
+                  title={`Delete token ${name}`}
+                  onClick={() => deleteThemeToken(name)}
+                  className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted outline-none hover:bg-hover hover:text-surface focus-visible:ring-1 focus-visible:ring-panel-focus"
+                >
+                  <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+                    <path d="M5 7h14M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {/* Add token: name + default light/dark pair. */}
+      <div className="mt-1.5 flex items-center gap-1">
+        <input
+          type="text"
+          value={draftName}
+          placeholder="newTokenName"
+          spellCheck={false}
+          aria-label="New token name"
+          className={cn(inputStyles({ tone: 'panel', size: 'xs' }), 'min-w-0 flex-1')}
+          onChange={(event) => setDraftName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              if (validName) {
+                setThemeToken(draftName.trim(), { light: '#E5E7EB', dark: '#1F2937' })
+                setDraftName('')
+              }
+            }
+          }}
+        />
+        <button
+          type="button"
+          disabled={!validName}
+          className="flex h-6 shrink-0 cursor-pointer items-center rounded bg-panel-field px-2 text-[11px] text-muted outline-none transition-colors hover:bg-hover hover:text-surface focus-visible:ring-1 focus-visible:ring-panel-focus disabled:opacity-40"
+          onClick={() => {
+            if (validName) {
+              setThemeToken(draftName.trim(), { light: '#E5E7EB', dark: '#1F2937' })
+              setDraftName('')
+            }
+          }}
+        >
+          Add
+        </button>
+      </div>
+      {themeMode === 'dark' && <p className="mt-1 px-1 text-[9px] text-muted">Previewing the dark palette (top bar).</p>}
+    </section>
   )
 }

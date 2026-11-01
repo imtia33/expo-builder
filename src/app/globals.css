@@ -1,6 +1,16 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 /*
+ * Tailwind v4 auto-content-detection scans every non-gitignored file —
+ * including docs/ and WORKLOG.md, whose research notes quote class names with
+ * `…` placeholders (e.g. open-pencil study §6). Those pseudo-classes were
+ * compiled into REAL (invalid) CSS and broke lightningcss. Exclude them.
+ */
+@source not "../../docs";
+@source not "../../scripts";
+@source not "../../tests";
+@source not "../../WORKLOG.md";
+/*
  * ExpoForge builder theme.
  * Token values are ported verbatim from open-pencil (MIT) — see src/app/theme/tokens.css.
  * This block maps shadcn/ui semantic token names onto the same palette so every

@@ -154,6 +154,13 @@ export function useNodeEdit({ screenId, artboardRef, panActive }: UseNodeEditOpt
   const [guides, setGuidesState] = useState<SnapGuides | null>(null)
   const [resizeLive, setResizeLive] = useState<ResizeLive | null>(null)
   const [editing, setEditing] = useState<TextEditSession | null>(null)
+  /* Canvas hover target (Phase 1, open-pencil hover outline): the node under
+   * the pointer while NO gesture is active. Updated from the pane's
+   * pointermove — React bails out when the id is unchanged, so the 60Hz
+   * pointer stream only re-renders on enter/leave of a node. */
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+  /* Live position readout (dp) while moving, for the overlay's position pill. */
+  const [moveLive, setMoveLive] = useState<{ left: number; top: number } | null>(null)
 
   const setGuides = useCallback((next: SnapGuides | null) => {
     setGuidesState(hasGuides(next) ? next : null)
@@ -167,6 +174,7 @@ export function useNodeEdit({ screenId, artboardRef, panActive }: UseNodeEditOpt
       useProjectStore.getState().endGesture(e.pointerId)
       setGuides(null)
       setResizeLive(null)
+      setMoveLive(null)
     },
     [setGuides]
   )
@@ -228,7 +236,19 @@ export function useNodeEdit({ screenId, artboardRef, panActive }: UseNodeEditOpt
   const onPanePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const d = drag.current
-      if (!d || d.kind !== 'move' || d.pointerId !== e.pointerId) return
+      if (!d || d.pointerId !== e.pointerId) {
+        // No active gesture → hover tracking (open-pencil hover outline).
+        if (!d) {
+          const artboardEl = artboardRef.current
+          if (!artboardEl) return
+          const hit = elementAtPoint(e.clientX, e.clientY)
+          const nodeEl = nodeElementWithin(hit, artboardEl)
+          const id = nodeEl ? nodeIdOf(nodeEl) : null
+          setHoveredNodeId((prev) => (prev === id ? prev : id))
+        }
+        return
+      }
+      if (d.kind !== 'move') return
       const { zoom } = useCanvasViewport.getState()
       const store = useProjectStore.getState()
       const dx = (e.clientX - d.startX) / zoom
@@ -247,11 +267,16 @@ export function useNodeEdit({ screenId, artboardRef, panActive }: UseNodeEditOpt
         top += res.dy
         nextGuides = toArtboardSpace({ v: res.vGuides, h: res.hGuides }, d.parentOrigin)
       }
-      store.setNodeStyle(d.nodeId, { left: Math.round(left), top: Math.round(top) })
+      const nextLeft = Math.round(left)
+      const nextTop = Math.round(top)
+      store.setNodeStyle(d.nodeId, { left: nextLeft, top: nextTop })
       setGuides(nextGuides)
+      setMoveLive({ left: nextLeft, top: nextTop })
     },
-    [setGuides]
+    [artboardRef, setGuides]
   )
+
+  const onPanePointerLeave = useCallback(() => setHoveredNodeId(null), [])
 
   /* ── resize gesture (overlay handles) ─────────────────────────────── */
 
@@ -395,6 +420,7 @@ export function useNodeEdit({ screenId, artboardRef, panActive }: UseNodeEditOpt
       onPointerMove: onPanePointerMove,
       onPointerUp: endDrag,
       onPointerCancel: endDrag,
+      onPointerLeave: onPanePointerLeave,
       onDoubleClick: onPaneDoubleClick
     },
     /** Pointerdown handler for a resize handle (overlay). */
@@ -409,6 +435,10 @@ export function useNodeEdit({ screenId, artboardRef, panActive }: UseNodeEditOpt
     guides,
     /** Live size during a resize — rendered by the overlay's size pill. */
     resizeLive,
+    /** Live position during a move (dp) — rendered by the overlay's position pill. */
+    moveLive,
+    /** Node under the pointer while idle (edit mode) — hover outline. */
+    hoveredNodeId,
     /** Active inline text-edit session (double-clicked text node). */
     editing,
     /** Close the inline text-edit session (after commit/cancel). */

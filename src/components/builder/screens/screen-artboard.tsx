@@ -49,7 +49,8 @@ import type { Screen } from '@/lib/project/types'
 import { isCanvasPanning } from '../canvas/input-mode'
 import { InlineTextEditor } from '../canvas/inline-text-edit'
 import { useNodeEdit } from '../canvas/node-edit'
-import { SelectionOverlay } from '../canvas/selection-overlay'
+import { NodeHoverOutline, SelectionOverlay } from '../canvas/selection-overlay'
+import { paletteResolver, paintSwatchBackground } from '@/lib/paint'
 import { SELECTION_COLOR } from './canvas-constants'
 import { deviceById, type DevicePreset, type PlatformId } from './device-presets'
 
@@ -221,6 +222,12 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
   const selectedNodeId = selection?.kind === 'node' && selection.screenId === screen.id ? selection.nodeId : null
   const highlighted = activeScreenId === screen.id || (selection?.kind === 'screen' && selection.screenId === screen.id)
   const reducedMotion = useReducedMotion()
+  /* Theme-aware screen background (Phase 1): solid / token / gradient resolve
+   * against the project palette + preview mode for the DOM div behind the
+   * RNW tree (the RNW root View carries the same value inside). */
+  const palette = useProjectStore((s) => s.data.theme?.colors)
+  const themeMode = useProjectStore((s) => s.ui.themeMode)
+  const screenBgCss = paintSwatchBackground(screen.background, paletteResolver(palette), themeMode) ?? 'transparent'
 
   const stackConfig = group?.nav.kind === 'stack' ? group.nav.stack : null
   const tabsConfig = group?.nav.kind === 'tabs' ? group.nav.tabs : null
@@ -333,7 +340,7 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
         {/* Content region: insets → nav chrome (+ strips) → RNW tree → nav chrome → insets. */}
         <div
           className="absolute inset-0 flex flex-col overflow-hidden"
-          style={{ borderRadius: preset.radius, background: screen.background }}
+          style={{ borderRadius: preset.radius, background: screenBgCss }}
         >
           {screen.safeArea.top && <div aria-hidden className="flex-none" style={{ height: preset.statusBar }} />}
 
@@ -441,11 +448,17 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
               nodeId={selectedNodeId}
               guides={nodeEdit.guides}
               resizeLive={nodeEdit.resizeLive}
+              moveLive={nodeEdit.moveLive}
               onHandlePointerDown={nodeEdit.onHandlePointerDown}
               handleMoveProps={nodeEdit.handleMoveProps}
             />,
             chromeTarget
           )
+        : null}
+      {/* Hover outline (open-pencil): 1px selection-color rect over the node
+       * under the pointer — never for the selected node (its overlay owns it). */}
+      {chromeTarget && !simOn && nodeEdit.hoveredNodeId && nodeEdit.hoveredNodeId !== selectedNodeId
+        ? createPortal(<NodeHoverOutline screen={screen} nodeId={nodeEdit.hoveredNodeId} />, chromeTarget)
         : null}
       {chromeTarget && !simOn && nodeEdit.editing && nodeEdit.editing.screenId === screen.id ? (
         createPortal(

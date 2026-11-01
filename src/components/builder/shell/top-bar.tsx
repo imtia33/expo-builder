@@ -57,6 +57,12 @@ const PLATFORMS: ReadonlyArray<{ id: PlatformId; label: string; icon: IconSlot }
   { id: 'android', label: 'Android', icon: 'platform.android' }
 ]
 
+/** Preview theme modes — how project tokens resolve on the canvas. */
+const THEME_MODES: ReadonlyArray<{ id: 'light' | 'dark'; label: string; icon: IconSlot }> = [
+  { id: 'light', label: 'Light', icon: 'theme.light' },
+  { id: 'dark', label: 'Dark', icon: 'theme.dark' }
+]
+
 export interface TopBarProps {
   /** Opens the keyboard help dialog — `() => setHelpOpen(true)` from useBuilderShortcuts. */
   onHelp: () => void
@@ -69,6 +75,8 @@ export function TopBar({ onHelp, className }: TopBarProps) {
   const setProjectName = useProjectStore((s) => s.setProjectName)
   const platform = useProjectStore((s) => s.ui.platform)
   const setGlobalPlatform = useProjectStore((s) => s.setGlobalPlatform)
+  const themeMode = useProjectStore((s) => s.ui.themeMode)
+  const setThemeMode = useProjectStore((s) => s.setThemeMode)
   const simOn = useProjectStore((s) => s.sim.on)
   const setSim = useProjectStore((s) => s.setSim)
   const canSimulate = useProjectStore((s) => s.data.screens.length > 0)
@@ -166,6 +174,30 @@ export function TopBar({ onHelp, className }: TopBarProps) {
             )
           })}
         </div>
+
+        {/* Theme preview mode: tokens ({ primary } paints) resolve against the
+            selected palette on the canvas; generated code keeps both via
+            useTheme() + useColorScheme. */}
+        <Tip label="Preview theme — how color tokens resolve">
+          <div role="group" aria-label="Preview theme mode" className={segRootClasses}>
+            {THEME_MODES.map((item) => {
+              const on = item.id === themeMode
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={on}
+                  data-state={on ? 'on' : 'off'}
+                  onClick={() => setThemeMode(item.id)}
+                  className={segItemClasses}
+                >
+                  <SlotIcon aria-hidden="true" slot={item.icon} className="size-3 shrink-0" />
+                  {item.label}
+                </button>
+              )
+            })}
+          </div>
+        </Tip>
 
         <Tip label={simTooltip}>
           {/* Wrapper span: tooltips must open on hover even while the button is

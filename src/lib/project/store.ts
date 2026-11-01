@@ -16,6 +16,7 @@ import { persist } from 'zustand/middleware'
 
 import { DEVICE_PRESETS, deviceById, type PlatformId } from '@/components/builder/screens/device-presets'
 import { getEntry } from '@/expoforge/registry'
+import { DEFAULT_THEME_COLORS } from '@/lib/paint'
 import { HistoryManager, installHistoryWatchdog } from './history'
 import type {
   AnimationSpec,
@@ -440,12 +441,19 @@ interface ProjectState {
   moveScreenCanvas: (id: string, x: number, y: number) => void
   setScreenDevice: (id: string, deviceId: string) => void
   setScreenSafeArea: (id: string, patch: Partial<{ top: boolean; bottom: boolean }>) => void
-  setScreenBackground: (id: string, color: string) => void
+  setScreenBackground: (id: string, color: string | { token: string } | { type: 'linear-gradient'; angle: number; stops: { color: string; position: number }[] } | { type: 'radial-gradient'; stops: { color: string; position: number }[] }) => void
   /** Pin/unpin a screen's file to hand-written source (code-controlled screen). */
   setScreenCodeOverride: (id: string, content: string | null) => void
 
   /* platform — ONE editor-global target platform (no per-screen platform) */
   setGlobalPlatform: (platform: PlatformId) => void
+
+  /* theme — plain-TS palette (Phase 1); tokens bind color fields, codegen
+   * emits constants/theme.ts + hooks/useTheme.ts (no NativeWind). */
+  setThemeToken: (name: string, value: { light: string; dark: string }) => void
+  deleteThemeToken: (name: string) => void
+  /** Preview theme mode — how tokens resolve on the canvas (not exported). */
+  setThemeMode: (mode: 'light' | 'dark') => void
 
   /* nodes */
   insertNode: (input: InsertNodeInput) => string
@@ -478,7 +486,13 @@ interface ProjectState {
   simBack: (artboardScreenId: string) => void
 }
 
-const EMPTY_DATA: ProjectData = { name: 'Untitled app', groups: [], screens: [], nodes: {} }
+const EMPTY_DATA: ProjectData = {
+  name: 'Untitled app',
+  groups: [],
+  screens: [],
+  nodes: {},
+  theme: { colors: { ...DEFAULT_THEME_COLORS } }
+}
 
 /**
  * REFERENCE snapshot — the pre-mutation state kept by undo. Valid because
@@ -568,7 +582,7 @@ export const useProjectStore = create<ProjectState>()(
 
       return {
         data: EMPTY_DATA,
-        ui: { expanded: {}, lastDeviceId: DEVICE_PRESETS[0].id, platform: 'ios' },
+        ui: { expanded: {}, lastDeviceId: DEVICE_PRESETS[0].id, platform: 'ios', themeMode: 'light' },
         selection: null,
         activeScreenId: null,
         sim: { on: false, history: {} },
@@ -960,6 +974,28 @@ export const useProjectStore = create<ProjectState>()(
             return { data: { ...st.data, screens }, ui: { ...st.ui, platform, lastDeviceId } }
           }),
 
+        /* ── theme (plain-TS palette; no NativeWind) ────────────────────── */
+        setThemeToken: (name, value) =>
+          commit((st) => {
+            const clean = name.trim()
+            if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(clean)) return {}
+            const colors = { ...(st.data.theme?.colors ?? {}), [clean]: { light: value.light, dark: value.dark } }
+            return { data: { ...st.data, theme: { colors } } }
+          }),
+
+        deleteThemeToken: (name) =>
+          commit((st) => {
+            const colors = { ...(st.data.theme?.colors ?? {}) }
+            if (!(name in colors)) return {}
+            delete colors[name]
+            // Bound paints keep their { token } reference (it resolves to
+            // nothing while absent) — same recoverability as an unset key.
+            return { data: { ...st.data, theme: { colors } } }
+          }),
+
+        setThemeMode: (mode) =>
+          commit((st) => (st.ui.themeMode === mode ? {} : { ui: { ...st.ui, themeMode: mode } })),
+
         setScreenSafeArea: (id, patch) =>
           commit((st) => ({
             data: {
@@ -1265,11 +1301,15 @@ export const useProjectStore = create<ProjectState>()(
           }
         }
         const platform: PlatformId = ui.platform ?? ui.lastPlatform ?? 'ios'
+        // Phase-1 paint/theme migration: seed the default palette when the
+        // persisted project predates themes, and default the preview mode to
+        // light. Existing solid color values keep working verbatim.
+        const theme = data.theme?.colors ? data.theme : { colors: { ...DEFAULT_THEME_COLORS } }
         // zustand's migrate must return the full store shape; the persisted
         // partial is merged over the initial state on rehydrate.
         return {
-          data: { name: data.name ?? 'Untitled app', groups, screens, nodes },
-          ui: { expanded: ui.expanded ?? {}, lastDeviceId: ui.lastDeviceId ?? DEVICE_PRESETS[0].id, platform },
+          data: { name: data.name ?? 'Untitled app', groups, screens, nodes, theme },
+          ui: { expanded: ui.expanded ?? {}, lastDeviceId: ui.lastDeviceId ?? DEVICE_PRESETS[0].id, platform, themeMode: ui.themeMode ?? 'light' },
           selection: null,
           activeScreenId: null
         } as unknown as ProjectState

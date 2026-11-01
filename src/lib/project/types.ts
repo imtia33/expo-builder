@@ -24,6 +24,18 @@
  */
 
 import type { PlatformId } from '@/components/builder/screens/device-presets'
+import type { ThemePalette } from '@/lib/paint'
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Theme (Phase 1: plain-TS project palette — the reference-app pattern,
+ * no NativeWind/uniwind). Tokens are light/dark pairs; color fields can bind
+ * to them ({ token: 'primary' } paint values) and codegen emits
+ * constants/theme.ts + hooks/useTheme.ts (see src/lib/paint).
+ * ──────────────────────────────────────────────────────────────────── */
+
+export interface ProjectTheme {
+  colors: ThemePalette
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Navigation
@@ -180,8 +192,10 @@ export interface Screen {
   y: number
   /** Device-frame safe-area insets applied to the screen content. */
   safeArea: { top: boolean; bottom: boolean }
-  /** Screen background color (emitted on the root View). */
-  background: string
+  /** Screen background — a paint value: solid hex, theme token
+   *  ({ token: 'primary' }), or a gradient. Emitted on the root View
+   *  (gradients wrap it in LinearGradient; see codegen/screens.ts). */
+  background: string | { token: string } | { type: 'linear-gradient'; angle: number; stops: { color: string; position: number }[] } | { type: 'radial-gradient'; stops: { color: string; position: number }[] }
   /**
    * Whole-file code override: when set, codegen emits this source VERBATIM for
    * the screen's file and visual editing of its nodes is disabled (the tree
@@ -239,6 +253,9 @@ export interface ProjectData {
   groups: ScreenGroup[]
   screens: Screen[]
   nodes: Record<string, ProjectNode>
+  /** Project color tokens (light/dark). Optional for backward compatibility;
+   *  the store migration seeds the default palette when missing. */
+  theme?: ProjectTheme
 }
 
 export type Selection =
@@ -256,6 +273,8 @@ export interface EditorUiState {
   lastDeviceId: string
   /** THE editor-wide target platform — exactly one, no per-screen platform. */
   platform: PlatformId
+  /** Preview theme mode — how tokens resolve on the canvas (light default). */
+  themeMode: 'light' | 'dark'
 }
 
 export interface SimState {

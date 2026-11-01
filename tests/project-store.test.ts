@@ -14,7 +14,7 @@ function resetStore() {
   const empty: ProjectData = { name: 'Test app', groups: [], screens: [], nodes: {} }
   useProjectStore.setState({
     data: empty,
-    ui: { expanded: {}, lastDeviceId: 'iphone-17-pro', platform: 'ios' },
+    ui: { expanded: {}, lastDeviceId: 'iphone-17-pro', platform: 'ios', themeMode: 'light' },
     selection: null,
     activeScreenId: null,
     sim: { on: false, history: {} },

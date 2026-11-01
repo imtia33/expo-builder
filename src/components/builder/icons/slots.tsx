@@ -18,12 +18,12 @@ export const ICON_SLOTS = {
   /* ── tools (bottom toolbar) ──────────────────────────────────────────── */
   'tool.select': 'ph:cursor',
   'tool.hand': 'ph:hand-grabbing',
-  'tool.screen': 'ph:device-mobile',
-  'tool.text': 'ph:text-t',
-  'tool.view': 'ph:square',
-  'tool.textinput': 'ph:cursor-text',
-  'tool.button': 'ph:cursor-click',
-  'tool.image': 'ph:image',
+  'tool.screen': 'ant-design:mobile-filled',
+  'tool.text': 'andrsrxn:text-case-sensitive',
+  'tool.view': 'codicon:screen-full',
+  'tool.textinput': 'reicon:text-input-focus',
+  'tool.button': 'tabler:hand-click',
+  'tool.image': 'akar-icons:image',
   'tool.scrollview': 'ph:mouse-scroll',
   'tool.switch': 'ph:toggle-right',
   'tool.divider': 'ph:minus',
@@ -34,10 +34,10 @@ export const ICON_SLOTS = {
 
   /* ── hierarchy tree (left panel) ─────────────────────────────────────── */
   'tree.collapse': 'ph:caret-right',
-  'tree.group.tabs': 'ph:squares-four',
-  'tree.group.stack': 'ph:stack',
+  'tree.group.tabs': 'iconmind:navbar-duotone-thin',
+  'tree.group.stack': 'f7:square-stack-3d-down-right',
   'tree.group.none': 'ph:rows',
-  'tree.screen': 'ph:device-mobile',
+  'tree.screen': 'ant-design:mobile-filled',
   'tree.layer': 'ph:square',
   'tree.add-screen': 'ph:plus',
   'tree.inspect': 'ph:gear-six',
@@ -45,7 +45,7 @@ export const ICON_SLOTS = {
   'tree.visible': 'ph:eye',
   'tree.hidden': 'ph:eye-slash',
   'tree.empty-groups': 'ph:stack',
-  'tree.new-screen': 'ph:device-mobile',
+  'tree.new-screen': 'ant-design:mobile-filled',
 
   /* ── left panel header / menus ───────────────────────────────────────── */
   'panel.new': 'ph:plus',
@@ -53,9 +53,11 @@ export const ICON_SLOTS = {
   'panel.new-screen': 'ph:file-plus',
   'panel.search': 'ph:magnifying-glass',
 
-  /* ── platform / simulation (top bar) ─────────────────────────────────── */
+  /* ── platform / theme / simulation (top bar) ─────────────────────────── */
   'platform.ios': 'ph:apple-logo',
   'platform.android': 'ph:android-logo',
+  'theme.light': 'ph:sun',
+  'theme.dark': 'ph:moon',
   'sim.start': 'ph:play',
   'sim.stop': 'ph:stop',
 
@@ -96,8 +98,8 @@ export const ICON_SLOTS = {
   /* ── dialogs ─────────────────────────────────────────────────────────── */
   'dialog.close': 'ph:x',
   'dialog.radio-check': 'ph:check',
-  'dialog.nav.tabs': 'ph:squares-four',
-  'dialog.nav.stack': 'ph:stack',
+  'dialog.nav.tabs': 'iconmind:navbar-duotone-thin',
+  'dialog.nav.stack': 'f7:square-stack-3d-down-right',
   'dialog.nav.none': 'ph:rows',
   'dialog.stepper-minus': 'ph:minus',
   'dialog.stepper-plus': 'ph:plus',
@@ -106,8 +108,8 @@ export const ICON_SLOTS = {
   /* ── canvas chrome ───────────────────────────────────────────────────── */
   'canvas.empty-phone': 'ph:device-mobile',
   'canvas.empty-plus': 'ph:plus',
-  'canvas.group.tabs': 'ph:squares-four',
-  'canvas.group.stack': 'ph:stack',
+  'canvas.group.tabs': 'iconmind:navbar-duotone-thin',
+  'canvas.group.stack': 'f7:square-stack-3d-down-right',
   'canvas.group.none': 'ph:rows',
   'canvas.stack-back': 'ph:caret-left',
   'canvas.show-ui': 'ph:sidebar-simple',

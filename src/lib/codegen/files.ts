@@ -28,6 +28,7 @@ import type { ProjectData, ScreenGroup } from '@/lib/project/types'
 import type { FileTreeNode } from './types'
 import { customTabBarName, renderCustomTabBarComponent, renderRootLayout, renderStackLayout, renderTabsLayout } from './navigation'
 import { renderScreenFile } from './screens'
+import { renderThemeConstants, renderUseThemeHook } from './paint'
 
 export function generateProjectFiles(data: ProjectData): Map<string, string> {
   const files = new Map<string, string>()
@@ -36,6 +37,14 @@ export function generateProjectFiles(data: ProjectData): Map<string, string> {
   const rootEntries = computeRootEntries(data)
   if (rootEntries.length === 0) return files
   files.set('app/_layout.tsx', renderRootLayout(rootEntries))
+
+  /* Project theme (Phase 1) — plain-TS palette consumed via useTheme();
+   * emitted whenever the project defines tokens (the store always seeds the
+   * default palette, mirroring the reference apps' constants/theme). */
+  if (data.theme && Object.keys(data.theme.colors).length > 0) {
+    files.set('constants/theme.ts', renderThemeConstants(data.theme.colors))
+    files.set('hooks/useTheme.ts', renderUseThemeHook())
+  }
 
   for (const group of sortedGroups(data)) {
     const screens = screensInBucket(data, group.id)
