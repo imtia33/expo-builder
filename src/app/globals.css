@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/*
+ * ExpoForge builder theme.
+ * Token values are ported verbatim from open-pencil (MIT) — see src/app/theme/tokens.css.
+ * This block maps shadcn/ui semantic token names onto the same palette so every
+ * shadcn primitive used inside the builder renders in the open-pencil design language.
+ * The builder is dark-only in v1 (open-pencil ships dark-first; light values exist in
+ * tokens.css behind html[data-theme='light'] for a future flip).
+ */
+@import "./theme/tokens.css";
+
+@theme {
+  /* shadcn semantic tokens → open-pencil palette (dark) */
+  --color-background: #1e1e1e; /* --color-canvas */
+  --color-foreground: #f0f0f0; /* --color-surface */
+  --color-card: #2a2a2a; /* --color-panel */
+  --color-card-foreground: #f0f0f0;
+  --color-popover: #2a2a2a; /* --color-panel */
+  --color-popover-foreground: #f0f0f0;
+  --color-primary: #2563eb; /* --color-accent */
+  --color-primary-foreground: #ffffff; /* --color-on-accent */
+  --color-secondary: #383838; /* --color-panel-field */
+  --color-secondary-foreground: #f0f0f0;
+  --color-muted-foreground: #a6a6a6; /* open-pencil --color-muted (text) */
+  --color-accent-foreground: #f0f0f0;
+  --color-destructive: #dc2626; /* --color-error-fill */
+  --color-ring: #3b82f6; /* --color-panel-focus */
+  --color-sidebar: #2a2a2a;
+  --color-sidebar-foreground: #f0f0f0;
+  --color-sidebar-primary: #2563eb;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #353535; /* --color-hover */
+  --color-sidebar-accent-foreground: #f0f0f0;
+  --color-sidebar-border: #3a3a3a;
+  --color-sidebar-ring: #3b82f6;
+  --color-chart-1: #3987e5;
+  --color-chart-2: #d95926;
+  --color-chart-3: #199e70;
+  --color-chart-4: #82aaff;
+  --color-chart-5: #e5bc8b;
+
+  /* fonts + radii (shadcn scale kept; builder surfaces use open-pencil radii) */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+:root {
+  --radius: 0.625rem;
+}
+
+/*
+ * Builder chrome base — ported from open-pencil src/app.css.
+ * The builder is a tool surface: full-bleed, no page scroll, no text selection chrome.
+ */
+@layer base {
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    @apply bg-canvas text-surface antialiased;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
+  #expoforge-root {
+    @apply bg-canvas text-surface;
+    width: 100%;
+    height: 100dvh;
+    user-select: none;
+    overflow: hidden;
+  }
+}
