@@ -27,21 +27,18 @@
 
 ### 2026-11-02 — this session
 - Read the improvement spec (Open Pencil parity, component insertion, flicker fixes, capability comparison vs reference apps — `upload/prompt-20261101-231739.txt` context).
-- ✔ Created this worklog; ✔ first push to github.com/imtia33/expo-builder (clean squashed import — old history kept locally on branch `history-backup-preimport`; `.env` + `upload/` excluded from tracking).
-- ◐ Phase 0 audit started (see below).
+- ✔ Created this worklog; ✔ pushed to github.com/imtia33/expo-builder (clean squashed import — old history kept locally on branch `history-backup-preimport`; `.env` + `upload/` de-tracked; note: an intermediate push briefly exposed the old history on the remote — force-pushed over with the clean root; `.env` contains only a local DB path, no secrets).
+- ✔ Phase 0 audit completed (see below).
+
+### ✔ 2026-11-02 — Phase 0: implementation audit (spec §1) — COMPLETE
+- Inspected: all docs; git history; registry + preview + artboard sources; `types.ts` (full data model); `store.ts` action inventory; `tool-registry.ts`; test baseline **22/22 passing**.
+- Open Pencil study → `docs/research/open-pencil-study.md` (concrete values: pill geometry, 24px layer rows, field/section rhythm, tooltip 400/300ms logic, full dark/light token sheet, 10 files worth porting).
+- Reference-app study → `docs/research/capability-matrix.md` (Appwrite-Native, Crimson, TravelMate cloned; **z.ai-mobile is 404** — re-check later; Keystone read from upload/). Verdict: builder wins on visual shell + real router codegen, but is an "interactive mockup" — **P0 ladder: events → lists → data → auth → forms** (each used by 3–4/4 apps). Streaming 0/4 (not needed for parity); maps/charts 1/4 each.
+- Audit compiled → `docs/13-phase0-audit.md`: inventory (working/needs improvement/partial/broken/missing), both flicker bugs located with fix directions (crossfade alpha-stacking; tooltip enter/leave), phase acceptance criteria, dependencies.
 
 ---
 
-## ◐ IN PROGRESS — Phase 0: implementation audit (spec §1)
-
-**Inspected ✔:** docs 02/04/08/09/11/12; `package.json`; git history; registry (`entries.ts`, `data/*` list); preview (`renderer.tsx`, `tab-bar.tsx`); `screen-artboard.tsx`; M1 history/store/test changes.
-
-**Remaining ◻:**
-- [ ] Read core: `src/lib/project/types.ts`, `store.ts` (action inventory), `canvas-host.tsx`, `src/components/builder/toolbar/*`, `right-panel/*`, `left-panel/*`, `icons/*`, `src/lib/codegen/*`.
-- [ ] Run the app (dev server + browser) — inventory of working/partial/broken per feature.
-- [ ] Open Pencil study (clone to `/research/`) → UI parity gap list.
-- [ ] Reference-app study: imtia33/Appwrite-Native, Crimson, TravelMate, z.ai-mobile + uploaded Keystone (`upload/keystone-extract/`) → capability matrix.
-- [ ] Compile: feature inventory (working / needs improvement / partial / broken / missing) + Open Pencil comparison + capability matrix + proposed improvements + dependencies.
+## ◐ IN PROGRESS — next: Phase 1 (visual improvements)
 
 ---
 
