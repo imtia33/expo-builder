@@ -102,6 +102,10 @@ function arrayAtExpression(collectionPath: string): string {
 
 const q = jsStringLiteral
 
+/** Header keys that are valid bare object-literal keys (emitted unquoted);
+ * anything else is emitted as a quoted string key. */
+const HEADER_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+
 /**
  * The useState/useCallback/useEffect block for one API list, at component
  * indent (2). The loader fetches for real: no mock, no sample rows. Loading
@@ -129,7 +133,14 @@ export function apiDeclarationLines(emission: ApiListEmission): string[] {
   const headerKeys = Object.keys(config.headers)
   if (headerKeys.length > 0) {
     optionLines.push('headers: {')
-    for (const key of headerKeys) optionLines.push(`  ${key}: ${q(config.headers[key])},`)
+    for (const key of headerKeys) {
+      // Identifier-safe keys emit bare (the hand-written look); anything
+      // else — Content-Type, X-API-Key… — MUST be quoted or the generated
+      // object literal is a syntax error. Found by the P0-3 babel-parse
+      // tests; pinned there.
+      const keyLit = HEADER_IDENT.test(key) ? key : q(key)
+      optionLines.push(`  ${keyLit}: ${q(config.headers[key])},`)
+    }
     optionLines.push('},')
   }
   if (config.method === 'POST' && config.body !== '') optionLines.push(`body: ${q(config.body)},`)

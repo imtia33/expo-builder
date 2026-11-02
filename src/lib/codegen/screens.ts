@@ -22,7 +22,14 @@
  * - Screen state (Phase 4 slice 2): entries referenced by {state.x} bindings
  *   or set-state actions emit `const [name, setName] = useState(initial)`
  *   (usage-gated, like theme tokens — unused declarations emit nothing).
- * - No React import beyond useState when state is used (nothing else yet).
+ * - API lists (Phase 4 P0-3): lists whose data source is an endpoint emit a
+ *   real-fetch block per list — useState rows/loading/error (+refreshing),
+ *   a useCallback loader, a useEffect mount call — collected BEFORE tree
+ *   emission (collectApiLists) so the list emitters bind `data={x}` to the
+ *   same identifiers. Real fetch, no mock layer: the generated app performs
+ *   the actual network request on device.
+ * - React imports grow with usage: useState (state or API), useCallback +
+ *   useEffect (API only).
  * - NEVER StyleSheet — all styles are inline literals.
  */
 
@@ -33,6 +40,7 @@ import { setterName } from '@/lib/state/screen-state'
 
 import { identifierFromKebab } from './format'
 import { ImportCollector } from './imports'
+import { apiDeclarationLines, collectApiLists } from './api-list'
 import { emitTreeNode, newEmitContext } from './nodes'
 import { gradientAttrs, tokenCode } from './paint'
 import { orderedStyle } from './style'
@@ -44,6 +52,13 @@ export function renderScreenFile(data: ProjectData, screen: Screen): string {
   const ctx = newEmitContext(imports, data)
 
   const tree = buildScreenTree(data, screen.id)
+  /* API-backed lists (Phase 4 P0-3): collected BEFORE tree emission — the
+   * list emitters read the identifier set from ctx.usage.api (data/refreshing/
+   * onRefresh attrs, {error} in the error design), and this function appends
+   * the real-fetch declarations below. Tree order; nesting rule applied by
+   * collectApiLists (lists inside repeated templates stay static). */
+  const apiLists = collectApiLists(tree, screen)
+  for (const [id, emission] of apiLists) ctx.usage.api.set(id, emission)
   const elements: JsxElement[] = []
   for (const tn of tree) {
     const e = emitTreeNode(tn, ctx)
@@ -97,7 +112,15 @@ export function renderScreenFile(data: ProjectData, screen: Screen): string {
   /* Screen state (Phase 4 slice 2): usage-gated useState declarations — only
    * entries actually referenced by a binding or a set-state handler. */
   const usedState = (screen.state ?? []).filter((e) => ctx.usage.state.has(e.name))
-  if (usedState.length > 0) imports.addNamed('react', 'useState')
+  /* React imports: useState when state entries are used OR an API list
+   * declares its rows/loading/error state; useCallback + useEffect only for
+   * the API loader and its mount call. */
+  const hasApiLists = apiLists.size > 0
+  if (usedState.length > 0 || hasApiLists) imports.addNamed('react', 'useState')
+  if (hasApiLists) {
+    imports.addNamed('react', 'useCallback')
+    imports.addNamed('react', 'useEffect')
+  }
   const importLines = imports.render()
   lines.push(...importLines)
   lines.push('')
@@ -106,6 +129,13 @@ export function renderScreenFile(data: ProjectData, screen: Screen): string {
   for (const e of usedState) {
     const initial = typeof e.initial === 'string' ? `'${e.initial.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'` : String(e.initial)
     lines.push(`  const [${e.name}, ${setterName(e.name)}] = useState(${initial});`)
+  }
+  /* Real-fetch declarations (Phase 4 P0-3), one block per API list in tree
+   * order; the loader performs the actual request against the configured
+   * endpoint (api-list.ts — exact shapes pinned by tests). */
+  for (const emission of apiLists.values()) {
+    lines.push(...apiDeclarationLines(emission))
+    lines.push('')
   }
   if (usesTokens) lines.push('  const { colors } = useTheme();')
   lines.push('  return (')

@@ -16,7 +16,7 @@ import { persist } from 'zustand/middleware'
 
 import { DEVICE_PRESETS, deviceById, type PlatformId } from '@/components/builder/screens/device-presets'
 import { getEntry } from '@/expoforge/registry'
-import { isListEntryType } from '@/lib/lists/bindings'
+import { isListEntryType, type ListRole } from '@/lib/lists/bindings'
 import { resolveStateValues, stateEntry, normalizeStateEntries } from '@/lib/state/screen-state'
 import { DEFAULT_THEME_COLORS } from '@/lib/paint'
 import { HistoryManager, installHistoryWatchdog } from './history'
@@ -479,8 +479,9 @@ interface ProjectState {
   /** Switch implementation variant (registry implementations[]) keeping compatible props. */
   setNodeImpl: (id: string, implId: string) => void
   /** Phase 2: set the list role of a DIRECT child of a list node
-   *  (flatlist/sectionlist). undefined role = 'item'. */
-  setNodeListRole: (id: string, role: 'item' | 'header' | 'footer' | 'separator' | 'empty') => void
+   *  (flatlist/sectionlist). undefined role = 'item'. P0-3 adds the API
+   *  loading / error state designs to the roster. */
+  setNodeListRole: (id: string, role: ListRole) => void
   /** Phase 4 (P0-1): wire (or unwire with null) one event hook on a node to
    *  an interaction action. One undo entry per wiring change. */
   setNodeInteraction: (id: string, hook: string, action: InteractionAction | null) => void

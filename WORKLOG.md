@@ -93,7 +93,51 @@
 - vitest **108/108** (91 + 17 new: helpers incl. blocklist/coercion/normalize, set-state resolve matrix, store declare/undo/sim writes, codegen: binding, usage gating, toggle/literal/escaped-string handlers, dangling-entry no-op, button-title on both impls, babel parse). `tsc --noEmit` clean; eslint clean on changed files.
 - Live browser (agent-browser): Screen tab State section (add + rename to `busy`, boolean, false); button Title bound `{state.busy}` renders **"false"** on canvas; On press → Set state → busy → Toggle; **Sim: each press flips the title false → true → false** (live values + re-render through the whole tree); Code tab: `import { useState } from 'react'` + `const [busy, setBusy] = useState(false);` + `onPress={() => { setBusy(!busy); }}` + `title={busy}`, no expo-router. (One live-found bug on the way: RNW Button renders as a full-width native `<BUTTON>` at a different y than the composite — click coordinates mattered, not a product bug.)
 
-**Next (Phase 4 remaining):** P0-3 data/API binding (mock API + fetch + loading/error/empty — the loading flags now have state to live in), P0-4 auth, P0-5 forms; P0-2's remainder (pull-to-refresh/refreshing) unblocked by state.
+**Next (Phase 4 remaining):** P0-4 auth, P0-5 forms; P0-2's remainder (pull-to-refresh on device — unblocked, ships with the API lists' `refreshing`/`onRefresh` emission). P0-3 data/API binding is DONE (see below).
+
+### ✔ 2026-11-02 — Phase 4 / slice 3: data/API binding — P0-3, REAL fetch (COMPLETE)
+
+**Scope + the standing constraint.** The plan line said "mock API layer"; the user's binding correction — **"no mocking but actual implementation"** — replaced that wholesale: every request in this slice is a real `fetch()` (the browser's own network stack on canvas, the same call shape on device). No canned responses, no fake latency, no sampled rows, anywhere.
+
+**Session note:** the previous session auto-committed mid-work (942 insertions, UUID message 135c47e) with the codegen path INERT and tsc broken; this session completed the slice and fixed what the tests exposed (list below).
+
+**Model + configuration** (`src/lib/lists/api-source.ts` — ONE module, THREE consumers)
+- A list's Data source switches Static rows ⇄ **API endpoint** (registry fields, `visibleWhen`-gated): URL, GET/POST, collection path (dotted identifiers, "" = the response IS the array), headers (`Key: Value` lines), body (verbatim string, POST only), pull-to-refresh. All of it is builder config — the emitters strip `API_PROP_KEYS`; none can become arbitrary generated code.
+- `apiConfigFromProps()` is the single parser; unconfigured endpoints behave as an honest empty static list (no invented defaults).
+
+**The one-cache design** — preview, inspector status row, and (structurally) the generated loader all run through the same module cache: in-flight dedup (concurrent callers share ONE request), settled entries served without refetch, `reloadApiSource()` forces the real request. `useApiSource(config | null)` is called unconditionally by every PreviewNode (rules of hooks); a null config (non-lists, static mode, unconfigured, or a list nested inside a repeated template — the nesting rule, mirrored exactly) is a cheap idle return.
+
+**Honesty rules (pinned by tests + live probes)**
+- Real errors only: network failures, non-2xx (`Request failed with status N`), CORS blocks — surfaced exactly as the platform reports them; the ERROR-role design binds `{error}` to the real message (both label surfaces: text children + RN-Button titles, the same two as item/state bindings).
+- Loading / error / empty are the USER-DESIGNED list roles — nothing designed → nothing rendered (the builder never injects UI the user didn't draw). The composition (`loading ? … : error ? … : empty`) is ONE resolver shared by canvas (listEmptyComponent evaluates it against the live fetch state) and generated code (ListEmptyComponent's conditional) — they cannot drift.
+- Unresolved bindings stay raw text (`{item.title}` against a response with no such field) — visible, never faked. A real response whose path misses → 0 rows, honestly.
+
+**Codegen** (the missing half this session)
+- `renderScreenFile` now collects API lists BEFORE tree emission (`collectApiLists` — tree order, nesting rule applied) and seeds `ctx.usage.api`; the list emitters bind `data={x}` / `sections={x}` / `refreshing` / `onRefresh` to the derived identifiers; the screen file appends `apiDeclarationLines()` — the useState/useCallback/useEffect real-fetch block. React imports grow exactly with usage (`useCallback, useEffect, useState`).
+- Identifiers derive from node names (fallback list/sections), never shadow builder-reserved names, user-declared state, or each other (first-free suffixes in tree order — router→router1 not router2; the tests pin actual behavior).
+- Sectionlist loader: rows→sections mapping inline (header/title, data/items aliases) — the exact coercion the live preview's `sectionsFromRows` applies.
+
+**Preview** (renderer.tsx)
+- `partitionByRole` now carries the loading/error designs; `renderListChrome` threads `errorValue` so `{error}` resolves to the real message; the API rows are the UNTOUCHED endpoint objects (deep bindings like `{item.address.city}` resolve against the actual payload).
+
+**Inspector**
+- New **Request** section under Data source (live status row — "Fetching…/Loaded N rows · N ms/Error: …" — reading the SAME cache the canvas fetches through) + a **Reload** button (the web stand-in for pull-to-refresh; the registry field says so; devices keep the real gesture). The static Rows editor hides while the API source is active (the array fields were missing the visibleWhen gate — fixed). List role select offers all 7 roles; `setNodeListRole`'s store signature widened to `ListRole`.
+
+**Bugs found on the way (all fixed, pinned by tests)**
+1. `renderScreenFile` never seeded `ctx.usage.api` — the entire API codegen path was inert (the auto-commit was mid-work).
+2. tsc broken at HEAD: `LIST_ROLES`/`setNodeListRole` still typed the 5-role union while `ListRole` had grown to 7; `useApiSource`'s null-narrowing.
+3. **Generated-code syntax error**: header keys emitted raw — `Content-Type:` unquoted is invalid JS in an object literal. Now identifier-safe keys emit bare, everything else quoted (`'Content-Type': '…'`). Caught by the babel-parse test before it could ever reach a user.
+4. **Phase-2 latent bug, exposed by the nesting-rule tests**: `emitTreeNode`'s `!opts.itemBinding` guard routed lists nested inside repeated templates to the default emitter — `<FlatList>` with orphan children, no data, no renderItem (invalid RN). Nested lists now go through the full list emitter as row content (static data literal — the nesting rule keeps their API mode off).
+5. The inspector's array fields skipped the `visibleWhen` gate (the static Rows editor showed in API mode).
+
+**Verification**
+- vitest **142/142** (108 + 34: api-source unit + fetch-client network contract, codegen end-to-end incl. nesting/collisions/sectionlist POST/babel parse). `tsc --noEmit` clean; eslint clean on changed files.
+- Live browser (agent-browser, DOM-level assertions) against REAL endpoints — no mock anywhere in the loop: jsonplaceholder/users → "Loaded 10 rows · 58 ms", 10 repeated rows on canvas, `{item.name}` → **Leanne Graham, Ervin Howell…**, deep `{item.address.city}` → **Gwenborough, Wisokyburgh…**; `{item.title}` stays raw (users have no title — honest); path miss on a real response → "Loaded 0 rows" + nothing injected; httpbin/delay/2 → the loading design during a REAL 2.6 s request, then "Loaded 0 rows · 2614 ms" + the empty design (object response, non-array at path); `.invalid` host → "Error: Failed to fetch" with the error design rendering **Failed to fetch** through `{error}`; cache-serve (config back → settled entry, no new request) + Reload → forced refetch (fresh 30 ms, new log entry); Code tab: the full generated file (merged react import, loader with the real URL, `data={list}`, `ListEmptyComponent={listLoading ? … : listError ? (<>{listError}</>) : …}`); sim mode renders the identical real rows; SectionList on httpbin/json → **real slide titles as section headers** ("Wake up to WonderWidgets!"), string rows showing the honest raw binding. Persistence unaffected (an apparent state loss was the ephemeral browser profile on `agent-browser close`, confirmed by a create→reload cycle).
+
+**Honest gaps (documented, not hidden)**
+- The web canvas runs requests from the browser, so endpoints must allow CORS (stated on the field + in the Request section); generated apps have no such limit on device.
+- Pull-to-refresh is device-only (FlatList `refreshing`/`onRefresh` emitted when enabled); the web canvas uses Reload.
+- POST body/headers are verbatim strings — no auth helpers; that's P0-4's business.
 
 ### ✔ 2026-11-02 — Phase 5: regression verification (COMPLETE)
 
@@ -212,10 +256,10 @@ Extended the EXISTING Add Element / registry / rendering infrastructure — no s
 Filled after the Phase 0 matrix; candidates already visible: flows/interactions wiring, lists runtime, data binding, theme system, custom components. No speculative features.
 - [x] **Slice 1 (P0-1 event wiring) — DONE 2026-11-02, see above:** registry-declared hooks (button `onPress` today) wire to Navigate (push/replace) / Back — one resolver, sim runtime, inspector section, expo-router codegen (inline handlers incl. list item templates; RN-Button placeholder replaced; dangling targets emit nothing).
 - [x] **Slice 2 (P1-6 screen state foundation) — DONE 2026-11-02, see above:** Screen.state entries → useState (usage-gated), {state.x} bindings in text/button titles (preview + codegen), Set state action (literal/toggle) with sim runtime + typed inspector controls.
-- [ ] P0-3 data/API binding (mock API layer, fetch, loading/error/empty states) — state foundation now in place.
-- [ ] P0-4 auth flows — needs state + data.
-- [ ] P0-5 forms (validation, secure entry, submit lifecycle) — needs state + events(actions beyond nav/set).
-- [ ] P0-2's remainder (pull-to-refresh/refreshing, loading states) — unblocked by slice 2.
+- [x] P0-3 data/API binding — DONE 2026-11-02, see above: REAL fetch end-to-end (no mock layer — the standing constraint), one cache for preview/inspector/codegen, user-designed loading/error/empty states, `{error}` bindings, pull-to-refresh emission, live-verified against real endpoints.
+- [ ] P0-4 auth flows — needs state + data (both now in place).
+- [ ] P0-5 forms (validation, secure entry, submit lifecycle) — needs state + events (actions beyond nav/set — the event vocabulary may need one more rung).
+- [x] P0-2's remainder (pull-to-refresh/refreshing, loading states) — DONE with P0-3: `refreshing`/`onRefresh` emitted when enabled (device gesture); loading/error states are the designed list roles.
 
 ### Phase 5 — Verification ✔ DONE (2026-11-02, see above)
 - [x] Existing projects still open; existing screens intact; existing components functional (pre-Phase-2 fixture + live persistence).
@@ -240,3 +284,4 @@ Filled after the Phase 0 matrix; candidates already visible: flows/interactions 
 | 2026-11-02 | Phase 2 | Component insertion: impl-aware registry/codegen/inspector end-to-end; View 3 options; Button 4 implementations; Lists 5 forms + data sources + roles + bindings (see entry above). |
 | 2026-11-02 | Phase 3 | Both flickers fixed at root cause: opaque-under-fade screen swap; open-pencil custom tooltip system replacing the Radix port (see entry above). |
 | 2026-11-02 | Phase 5 | Regression verification: pre-Phase-2 backward-compat emission pinned by tests; generated files parse as JSX; 76/76 (see entry above). |
+| 2026-11-02 | Phase 4 slice 3 (P0-3) | Data/API binding with REAL fetch (no mock layer): completed the mid-work auto-commit (135c47e — codegen seeding was missing, tsc broken); one cache for preview/inspector/codegen; designed loading/error/empty states; {error} bindings; 5 bugs fixed incl. a Phase-2 latent emitter bug and a generated-code syntax error; 142/142; live-verified against real endpoints (see entry above). |

@@ -166,6 +166,17 @@ export interface ApiSection {
  */
 export function coerceApiSections(json: unknown, collectionPath: string): ApiSection[] {
   const raw = coerceApiRows(json, collectionPath)
+  return sectionsFromRows(raw)
+}
+
+/**
+ * SECTIONLIST sections from ALREADY-EXTRACTED rows (the live cache's `data` —
+ * the array at the collection path). The live preview consumes this: the
+ * generated code performs the identical per-row mapping inline (see
+ * apiDeclarationLines' sectionlist branch).
+ */
+export function sectionsFromRows(rows: unknown): ApiSection[] {
+  const raw = Array.isArray(rows) ? rows : []
   const out: ApiSection[] = []
   for (const row of raw) {
     if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
@@ -395,10 +406,10 @@ function subscribeFor(key: string, config: ApiSourceConfig): (onStoreChange: () 
 }
 
 export function useApiSource(config: ApiSourceConfig | null): ApiFetchState {
-  const key = config ? apiConfigKey(config) : null
+  const key = config !== null ? apiConfigKey(config) : null
   return useSyncExternalStore(
-    key === null ? NOOP_SUBSCRIBE : subscribeFor(key, config),
-    key === null ? IDLE_SNAPSHOT : () => cache.get(key)?.state ?? IDLE,
+    key !== null && config !== null ? subscribeFor(key, config) : NOOP_SUBSCRIBE,
+    key !== null ? () => cache.get(key)?.state ?? IDLE : IDLE_SNAPSHOT,
     IDLE_SNAPSHOT
   )
 }

@@ -25,6 +25,7 @@ import { resolveInteraction } from '@/lib/interactions/resolve'
 import { screenHref } from '@/lib/codegen/interactions'
 import { cn } from '@/lib/utils'
 import { CollapsibleSection } from '../collapsible-section'
+import { ApiStatusSection } from './api-status'
 import { SectionFields } from '../field-grid'
 import { QuietHint } from '../shared'
 import type { FieldChangeValue, FieldSpec, PanelSection } from '../schema'
@@ -32,7 +33,7 @@ import type { FieldChangeValue, FieldSpec, PanelSection } from '../schema'
 /** Long-ish content becomes a textarea; short content stays single-line. */
 const MULTILINE_THRESHOLD = 32
 
-const LIST_ROLES: ListRole[] = ['item', 'header', 'footer', 'separator', 'empty']
+const LIST_ROLES: ListRole[] = ['item', 'header', 'footer', 'separator', 'empty', 'loading', 'error']
 
 function propFieldToSpec(field: PropField, node: ProjectNode): FieldSpec {
   const isSet = field.key in node.props && node.props[field.key] !== undefined
@@ -163,8 +164,11 @@ function propSections(entry: RegistryEntry, node: ProjectNode): PanelSection[] {
     })
   }
   // Array-typed props become their own full-width sections (list data sources).
+  // The visibleWhen gate applies here too: the static Rows editor hides while
+  // the API source is active (P0-3) — the endpoint owns the data then.
   for (const field of fields) {
     if (field.type !== 'array') continue
+    if (!visibleWhenPass(field, node, defaults)) continue
     const spec = arrayFieldToSpec(field, node)
     if (!spec) continue
     sections.push({
@@ -475,7 +479,7 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
             label:
               parent?.type === 'sectionlist'
                 ? 'Item template repeats per row; Header renders per section (renderSectionHeader).'
-                : 'Item template repeats per row. Header / Footer / Separator / Empty render once for the list.'
+                : 'Item template repeats per row. Header / Footer / Separator / Empty render once; Loading / Error states show while an API source fetches or fails.'
           }
         ]
       }
@@ -493,6 +497,11 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
     ...sections
   ]
 
+  /* The live API status section (P0-3) sits directly below "Data source" —
+   * the section that configures the endpoint it reports on. Slicing the
+   * stack preserves every other position. */
+  const dsIndex = orderedSections.findIndex((s) => s.title === 'Data source')
+
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin', className)}>
       {sections.length === 0 && !implSection && !roleSection && !iaSection ? (
@@ -502,12 +511,30 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
           description={entry.description}
         />
       ) : null}
-      <SectionStack
-        sections={orderedSections}
-        onFieldChange={handleFieldChange}
-        onScrubStart={beginGesture}
-        onScrubEnd={endGesture}
-      />
+      {dsIndex === -1 ? (
+        <SectionStack
+          sections={orderedSections}
+          onFieldChange={handleFieldChange}
+          onScrubStart={beginGesture}
+          onScrubEnd={endGesture}
+        />
+      ) : (
+        <>
+          <SectionStack
+            sections={orderedSections.slice(0, dsIndex + 1)}
+            onFieldChange={handleFieldChange}
+            onScrubStart={beginGesture}
+            onScrubEnd={endGesture}
+          />
+          <ApiStatusSection node={node} />
+          <SectionStack
+            sections={orderedSections.slice(dsIndex + 1)}
+            onFieldChange={handleFieldChange}
+            onScrubStart={beginGesture}
+            onScrubEnd={endGesture}
+          />
+        </>
+      )}
       <div className="h-6 shrink-0" aria-hidden="true" />
     </div>
   )

@@ -39,8 +39,17 @@ import type { ProjectNode, Screen } from '@/lib/project/types'
 import { getEntry, resolveImplementation } from '../registry'
 import { resolveNode, textPropField, textPropValue } from './resolve'
 import {
+  apiConfigFromProps,
+  parseErrorBinding,
+  sectionsFromRows,
+  useApiSource,
+  type ApiFetchState,
+  type ApiSourceConfig
+} from '@/lib/lists/api-source'
+import {
   bindingPreviewValue,
   isItemBinding,
+  isListEntryType,
   listItems,
   listSections,
   roleOfNode,
@@ -256,6 +265,13 @@ interface PreviewNodeProps {
    * resolver both consume).
    */
   binding?: unknown
+  /**
+   * Phase 4 (P0-3): the real request error message while rendering an API
+   * list's ERROR-role design. {error} in the text-content field resolves to
+   * it — the same surface the emitter substitutes its error-state variable
+   * on (api-list.ts errorVar). Undefined everywhere else.
+   */
+  errorValue?: string
 }
 
 function renderChildNodes(
@@ -274,26 +290,87 @@ function renderChildNodes(
  * ───────────────────────────────────────────────────────────────────────────── */
 
 /** A list's direct children split by the role they play. */
-function partitionByRole(siblings: ProjectNode[]): { item: ProjectNode[]; header: ProjectNode[]; footer: ProjectNode[]; separator: ProjectNode[]; empty: ProjectNode[] } {
-  const out = { item: [] as ProjectNode[], header: [] as ProjectNode[], footer: [] as ProjectNode[], separator: [] as ProjectNode[], empty: [] as ProjectNode[] }
+interface RolePartition {
+  item: ProjectNode[]
+  header: ProjectNode[]
+  footer: ProjectNode[]
+  separator: ProjectNode[]
+  empty: ProjectNode[]
+  /** Phase 4 (P0-3): the user-designed loading / error states an API-backed
+   * list shows while fetching / after a failed request. */
+  loading: ProjectNode[]
+  error: ProjectNode[]
+}
+
+function partitionByRole(siblings: ProjectNode[]): RolePartition {
+  const out: RolePartition = {
+    item: [],
+    header: [],
+    footer: [],
+    separator: [],
+    empty: [],
+    loading: [],
+    error: []
+  }
   for (const child of siblings) out[roleOfNode(child)].push(child)
   return out
 }
 
-/** Render the once-per-list chrome (header/footer/separator/empty) — never
- * per-row: bindings inside them resolve to their raw {item.…} text, the
- * honest signal that they are not row context. */
-function renderListChrome(nodes: ProjectNode[], childIndex: ChildIndex, platform: PlatformId): ReactElement | null {
-  return <Fragment>{renderChildNodesFor(nodes, childIndex, platform)}</Fragment>
+/** Render the once-per-list chrome (header/footer/separator/empty and the
+ * API loading/error states) — never per-row: bindings inside them resolve to
+ * their raw {item.…} text, the honest signal that they are not row context.
+ * The ERROR design passes `errorValue` down so {error} resolves to the real
+ * request error message. */
+function renderListChrome(
+  nodes: ProjectNode[],
+  childIndex: ChildIndex,
+  platform: PlatformId,
+  errorValue?: string
+): ReactElement {
+  return <Fragment>{renderChildNodesFor(nodes, childIndex, platform, errorValue)}</Fragment>
 }
 
-function renderChildNodesFor(nodes: ProjectNode[], childIndex: ChildIndex, platform: PlatformId): ReactNode[] {
+function renderChildNodesFor(
+  nodes: ProjectNode[],
+  childIndex: ChildIndex,
+  platform: PlatformId,
+  errorValue?: string
+): ReactNode[] {
   return nodes.map((child) => (
-    <PreviewNode key={child.id} node={child} childIndex={childIndex} platform={platform} />
+    <PreviewNode key={child.id} node={child} childIndex={childIndex} platform={platform} errorValue={errorValue} />
   ))
 }
 
-function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps): ReactNode {
+/**
+ * ListEmptyComponent (Phase 4, P0-3). Static lists: the designed empty state,
+ * exactly as Phase 2 rendered it. API lists: the state-dependent composition
+ * the generated conditional encodes — `loading ? (…) : error ? (…) : (…)` —
+ * evaluated against the LIVE fetch state, so the canvas can never drift from
+ * the generated code. Fall-through shows the empty design (the conditional's
+ * final branch); nothing designed for the active state → undefined (the
+ * builder never injects UI the user didn't draw).
+ */
+function listEmptyComponent(
+  roles: RolePartition,
+  apiConfig: ApiSourceConfig | null,
+  apiFetch: ApiFetchState,
+  childIndex: ChildIndex,
+  platform: PlatformId
+): ReactElement | undefined {
+  if (apiConfig === null) {
+    return roles.empty.length > 0 ? renderListChrome(roles.empty, childIndex, platform) : undefined
+  }
+  if (apiFetch.status === 'loading' || apiFetch.status === 'idle') {
+    if (roles.loading.length > 0) return renderListChrome(roles.loading, childIndex, platform)
+  } else if (apiFetch.status === 'error') {
+    if (roles.error.length > 0) {
+      return renderListChrome(roles.error, childIndex, platform, apiFetch.error ?? 'Something went wrong')
+    }
+  }
+  return roles.empty.length > 0 ? renderListChrome(roles.empty, childIndex, platform) : undefined
+}
+
+function PreviewNode({ node, childIndex, platform, binding, errorValue }: PreviewNodeProps): ReactNode {
   /* Paint resolution (Phase 1): theme tokens bind to the project palette,
    * gradients (backgroundColor) become RNW CSS backgroundImage. Subscribing
    * here means palette edits + light/dark toggles re-render the tree. Hooks
@@ -314,6 +391,18 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
    * unconditional), consumed only by components whose registry declares the
    * hook (button today). Undefined in edit mode or when unwired. */
   const wiredPress = useWiredHook('onPress', node)
+  /* API data source (Phase 4, P0-3): a list whose source is an endpoint
+   * fetches FOR REAL from here — the browser performs the same request the
+   * generated app performs on device, in edit and sim mode alike (module
+   * cache + in-flight dedup; the inspector's status row reads the same
+   * cache). The hook is unconditional (rules of hooks — hidden/unknown nodes
+   * must not change the hook count); a null config is a cheap idle return.
+   * Null when not a list, static mode, an unconfigured endpoint — and when
+   * the list itself sits inside a repeated template (binding set): the
+   * nesting rule collectApiLists applies to generated code, mirrored here —
+   * a fetch per rendered row would need hooks inside renderItem's callback. */
+  const apiConfig = isListEntryType(node.type) && binding === undefined ? apiConfigFromProps(node.props) : null
+  const apiFetch = useApiSource(apiConfig)
 
   // Hidden nodes are skipped entirely (subtree included).
   if (node.hidden) return null
@@ -331,6 +420,17 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
     const textKey = textPropField(entry, node.impl)?.key
     if (textKey !== undefined && typeof props[textKey] === 'string') {
       props[textKey] = statePreviewValue(props[textKey], stateValues)
+    }
+  }
+
+  /* Error binding (Phase 4, P0-3): inside an API list's ERROR-role design,
+   * {error} in the text-content field (text.content, button.title…) resolves
+   * to the real request error message — the same two surfaces the code
+   * generator substitutes its error-state variable on. */
+  if (errorValue !== undefined) {
+    const textKey = textPropField(entry, node.impl)?.key
+    if (textKey !== undefined && typeof props[textKey] === 'string' && parseErrorBinding(props[textKey])) {
+      props[textKey] = errorValue
     }
   }
 
@@ -490,15 +590,25 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
     /* flatlist (Phase 2) — the item template repeats once per data row. The
      * template children render through the REAL RNW FlatList (virtualized
      * scrolling on canvas); bindings substitute per row. Header / footer /
-     * separator / empty children become the corresponding list chrome. */
+     * separator / empty children become the corresponding list chrome.
+     * P0-3: an API source feeds the rows the endpoint really returned. */
     case 'flatlist': {
       const roles = partitionByRole(childIndex.get(node.id) ?? [])
-      const items = listItems(props)
+      /* Data rows. Static: the array editor's rows. API: the REAL response —
+       * untouched endpoint objects, so deep bindings ({item.address.city})
+       * resolve against the actual payload; [] while loading / after an
+       * error, where the composed empty region takes over. */
+      const rows: unknown[] =
+        apiConfig !== null
+          ? apiFetch.status === 'success'
+            ? (apiFetch.data ?? [])
+            : []
+          : listItems(props)
       const showsIndicator = asBool(props.showsScrollIndicator) ?? true
       const horizontal = asBool(props.horizontal) ?? false
       const numColumns = Math.max(1, Math.min(4, asInt(props.numColumns) ?? 1))
       const gap = Math.max(0, Math.min(64, asInt(props.itemSpacing) ?? 0))
-      const rowEls = items.map((row, i) => (
+      const rowEls = rows.map((row, i) => (
         <Fragment key={i}>
           {roles.item.map((c) => (
             <PreviewNode key={c.id} node={c} childIndex={childIndex} platform={platform} binding={row} />
@@ -509,7 +619,7 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
         <FlatList
           testID={node.id}
           style={style}
-          data={items}
+          data={rows}
           renderItem={({ index }) => rowEls[index] ?? null}
           horizontal={horizontal}
           numColumns={horizontal ? 1 : numColumns}
@@ -519,7 +629,7 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
           ListHeaderComponent={roles.header.length > 0 ? renderListChrome(roles.header, childIndex, platform) : undefined}
           ListFooterComponent={roles.footer.length > 0 ? renderListChrome(roles.footer, childIndex, platform) : undefined}
           ItemSeparatorComponent={roles.separator.length > 0 ? renderListChrome(roles.separator, childIndex, platform) : undefined}
-          ListEmptyComponent={roles.empty.length > 0 ? renderListChrome(roles.empty, childIndex, platform) : undefined}
+          ListEmptyComponent={listEmptyComponent(roles, apiConfig, apiFetch, childIndex, platform)}
         />
       )
     }
@@ -528,13 +638,23 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
      * (role 'header') renders once per section with {section.…} bindings.
      * RNW consumes the REAL SectionList with RN's section shape ({ header,
      * data }); the builder's array editor stores { header, items } — mapped
-     * here and by the code emitter identically. */
+     * here and by the code emitter identically.
+     * P0-3: an API source feeds sections coerced from the endpoint's rows. */
     case 'sectionlist': {
       const roles = partitionByRole(childIndex.get(node.id) ?? [])
-      const sections = listSections(props)
+      /* Sections. Static: the array editor's. API: the REAL response — rows
+       * coerced to sections (header/title, data/items aliases), so
+       * {section.header} and item bindings resolve against the actual
+       * payload; [] while loading / after an error. */
+      const rnSections: Array<{ header: string | undefined; data: unknown[] }> =
+        apiConfig !== null
+          ? (apiFetch.status === 'success' ? sectionsFromRows(apiFetch.data ?? []) : []).map((s) => ({
+              header: s.header === '' ? undefined : s.header,
+              data: s.data
+            }))
+          : listSections(props).map((s) => ({ header: s.header, data: s.items }))
       const showsIndicator = asBool(props.showsScrollIndicator) ?? true
       const gap = Math.max(0, Math.min(64, asInt(props.itemSpacing) ?? 0))
-      const rnSections: Array<{ header: string | undefined; data: ListItem[] }> = sections.map((s) => ({ header: s.header, data: s.items }))
       const sectionIndex = new Map<unknown, number>(rnSections.map((s, i) => [s, i] as const))
       const rowEls = rnSections.map((section) =>
         section.data.map((row, i) => (
@@ -564,7 +684,7 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
           contentContainerStyle={gap > 0 ? { gap } : undefined}
           ListFooterComponent={roles.footer.length > 0 ? renderListChrome(roles.footer, childIndex, platform) : undefined}
           ItemSeparatorComponent={roles.separator.length > 0 ? renderListChrome(roles.separator, childIndex, platform) : undefined}
-          ListEmptyComponent={roles.empty.length > 0 ? renderListChrome(roles.empty, childIndex, platform) : undefined}
+          ListEmptyComponent={listEmptyComponent(roles, apiConfig, apiFetch, childIndex, platform)}
         />
       )
     }

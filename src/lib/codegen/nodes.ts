@@ -208,11 +208,16 @@ export function emitTreeNode(tn: TreeNode, ctx: EmitContext, opts: EmitOpts = {}
   const emitter = entry.emitter ?? tn.node.type
 
   /* Lists own their child emission (Phase 2): roles decide which children
-   * become the repeated template vs the once-per-list chrome. Guarded by
-   * itemBinding so a list nested inside another list's item template still
-   * emits its own renderItem (a nested list is row content, not a template
-   * part of the outer list). */
-  if ((emitter === 'flatlist' || emitter === 'sectionlist') && !opts.itemBinding) {
+   * become the repeated template vs the once-per-list chrome — in EVERY
+   * context. A list nested inside another list's template / section header
+   * renders as row content through the SAME list emitter: its own data (a
+   * static literal — collectApiLists excludes template subtrees, so a nested
+   * API-configured list is honest static), its own renderItem, its own chrome.
+   * The previous `!opts.itemBinding` guard here routed nested lists to the
+   * default emitter instead — <FlatList> with orphan children and no
+   * data/renderItem (invalid RN usage); exposed by the P0-3 nesting-rule
+   * tests, which now pin the full form. */
+  if (emitter === 'flatlist' || emitter === 'sectionlist') {
     return emitter === 'flatlist' ? emitFlatList(tn, entry, ctx) : emitSectionList(tn, entry, ctx)
   }
 
