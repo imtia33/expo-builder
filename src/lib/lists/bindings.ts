@@ -57,7 +57,9 @@ export const LIST_ROLE_LABEL: Record<ListRole, string> = {
   header: 'Header',
   footer: 'Footer',
   separator: 'Separator',
-  empty: 'Empty state'
+  empty: 'Empty state',
+  loading: 'Loading state',
+  error: 'Error state'
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

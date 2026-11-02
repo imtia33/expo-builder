@@ -292,8 +292,13 @@ export interface ProjectNode {
    * sectionlist) plays in the list's runtime composition. Undefined = 'item'
    * (the repeated item template). Editor-only model concern; never emitted as
    * a component prop — list emitters read it from the node directly.
+   *
+   * Phase 4 (P0-3): 'loading' and 'error' join the roster — the user-designed
+   * states an API-backed list shows while fetching / after a failed request
+   * (they compose into ListEmptyComponent's conditional in generated code and
+   * the same composition on the canvas).
    */
-  listRole?: 'item' | 'header' | 'footer' | 'separator' | 'empty'
+  listRole?: 'item' | 'header' | 'footer' | 'separator' | 'empty' | 'loading' | 'error'
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

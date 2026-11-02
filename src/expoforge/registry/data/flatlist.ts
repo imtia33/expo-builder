@@ -1,17 +1,18 @@
 /*
- * flatlist · Phase 2 lists — the repeating list with a static data source.
+ * flatlist · Phase 2 lists — the repeating list. Phase 4 (P0-3): the data
+ * source switches between the static array (rows edited in the array editor)
+ * and a REAL API endpoint (fetched for real — canvas and generated code).
  *
  * "Design ONE item, repeat with dynamic data": the list's direct children
  * are the ITEM TEMPLATE (role 'item'; other roles: header / footer /
- * separator / empty — node.listRole). The data source is a static array
- * (props.data, edited with the array editor) — the same TravelMate-style
- * local array every reference app ships; API data binding is the data module
- * (Phase 4, per the capability matrix).
+ * separator / empty / loading / error — node.listRole). Text content /
+ * Image source inside the template bind to the row (`{item.title}`,
+ * `{item.address.city}`); the error-role design may bind `{error}` to the
+ * real request error. lib/lists/bindings + lib/lists/api-source are the one
+ * resolver pair the preview and the code generator both consume.
  *
- * Text content / Image source inside the template may bind to the row:
- * `{item.title}`, `{item.image}` — resolved per row in the preview and
- * emitted as real expressions by the code generator (lib/lists/bindings is
- * the one resolver both consume).
+ * The API fields are builder config, never FlatList attributes — the emitter
+ * strips them (API_PROP_KEYS) and emits the fetch lifecycle instead.
  */
 import type { RegistryEntry } from '../types'
 
@@ -33,13 +34,86 @@ export const FLATLIST_ENTRY: RegistryEntry = {
   insert: { width: 320, height: 420 },
   props: [
     {
+      key: 'dataSourceKind',
+      label: 'Source',
+      type: 'enum',
+      options: [
+        { value: 'static', label: 'Static rows' },
+        { value: 'api', label: 'API endpoint' }
+      ],
+      default: 'static',
+      section: 'Data source',
+      description: 'Static rows live in this project. An API endpoint is fetched for real — on the canvas by your browser, in the app by fetch() on device.'
+    },
+    {
+      key: 'apiUrl',
+      label: 'Endpoint',
+      type: 'string',
+      placeholder: 'https://api.example.com/items',
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'api' },
+      description: 'Fetched for real. The canvas runs the request from your browser, so the endpoint must allow cross-origin requests (CORS); the generated app has no such limit on device.'
+    },
+    {
+      key: 'apiMethod',
+      label: 'Method',
+      type: 'enum',
+      control: 'segmented',
+      options: [
+        { value: 'GET', label: 'GET' },
+        { value: 'POST', label: 'POST' }
+      ],
+      default: 'GET',
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'api' }
+    },
+    {
+      key: 'apiCollectionPath',
+      label: 'Rows at',
+      type: 'string',
+      placeholder: 'data.results (empty = the response is the array)',
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'api' },
+      description: 'Dotted path to the rows array inside the JSON response, e.g. data.results. Leave empty when the response body itself is the array.'
+    },
+    {
+      key: 'apiHeaders',
+      label: 'Headers',
+      type: 'string',
+      control: 'textarea',
+      placeholder: 'Authorization: Bearer …',
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'api' },
+      description: 'One per line, `Key: Value`.'
+    },
+    {
+      key: 'apiBody',
+      label: 'Body',
+      type: 'string',
+      control: 'textarea',
+      placeholder: '{ "query": "…" }',
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'api' },
+      description: 'Request body, sent with POST requests.'
+    },
+    {
+      key: 'refreshEnabled',
+      label: 'Pull to refresh',
+      type: 'boolean',
+      default: false,
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'api' },
+      description: 'On device, the pull gesture re-runs the request (FlatList refreshing + onRefresh). The web canvas has no pull gesture — use Reload above.'
+    },
+    {
       key: 'data',
-      label: 'Data source',
+      label: 'Rows',
       type: 'array',
       item: [...ITEM_FIELDS],
       minItems: 0,
       default: [{ title: 'Item 1' }, { title: 'Item 2' }, { title: 'Item 3' }],
-      section: 'Content',
+      section: 'Data source',
+      visibleWhen: { key: 'dataSourceKind', equals: 'static' },
       description: 'The static rows every item template renders. Bind inside the template with {item.title}, {item.subtitle}, {item.image}.'
     },
     {
@@ -85,5 +159,5 @@ export const FLATLIST_ENTRY: RegistryEntry = {
   styleSections: ['layout', 'appearance', 'effects'],
   codegen: { import: "import { FlatList } from 'react-native'", component: 'FlatList', emitter: 'flatlist' },
   previewNote:
-    'The item template repeats once per data row (bindings resolve per row; an unresolved binding shows its {item.…} text). Item-template roots should stay in-flow (Style > Layout > In flow) — rows come from the list layout, not absolute placement.'
+    'The item template repeats once per data row (bindings resolve per row; an unresolved binding shows its {item.…} text). API sources fetch for real — design your loading and error states as child layers with the List role set to Loading state / Error state, and bind {error} inside the error design. Item-template roots should stay in-flow (Style > Layout > In flow) — rows come from the list layout, not absolute placement.'
 }

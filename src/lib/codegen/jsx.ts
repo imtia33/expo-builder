@@ -29,6 +29,10 @@ export type AttrValue =
   /** An arrow function with destructured params returning an element:
    *  `name={({ item }) => (<View…/>)}` — renderItem / renderSectionHeader. */
   | { kind: 'arrow'; params: string; value: JsxElement }
+  /** A conditional expression of elements: `name={a ? (<…/>) : b ? (<…/>) : null}`
+   *  — the API lists' ListEmptyComponent (loading → error → empty designs,
+   *  Phase 4 P0-3). `when: null` marks the unconditional final branch. */
+  | { kind: 'cond'; branches: { when: string | null; el: JsxElement }[] }
 
 export type JsxChild =
   | { kind: 'element'; el: JsxElement }
@@ -100,6 +104,33 @@ function renderAttr(a: JsxAttr, col: number): string {
     const bodyCol = col + 2
     const body = renderElement(a.value.value, bodyCol).join('\n')
     return `${a.name}={(${a.value.params}) => (${'\n'}${body}${'\n'}${' '.repeat(col)})}`
+  }
+  if (a.value.kind === 'cond') {
+    // Prettier-style conditional layout:
+    //   name={a ? (\n  <body/>\ncol) : b ? (\n  <body/>\ncol) : (\n  <body/>\ncol)}
+    // Inline when every branch body is single-line and the whole thing fits.
+    const bodyCol = col + 2
+    const bodies = a.value.branches.map((b) => renderElement(b.el, bodyCol))
+    const hasElse = a.value.branches[a.value.branches.length - 1]?.when === null
+    const allSingle = bodies.every((ls) => ls.length === 1)
+    if (allSingle) {
+      const inlineParts = a.value.branches.map((b, i) => {
+        const wrapped = `(${bodies[i][0].trim()})`
+        return b.when === null ? wrapped : `${b.when} ? ${wrapped}`
+      })
+      const inline = `${inlineParts.join(' : ')}${hasElse ? '' : ' : null'}`
+      if (col + a.name.length + 3 + inline.length <= MAX_WIDTH) {
+        return `${a.name}={${inline}}`
+      }
+    }
+    const segs: string[] = []
+    a.value.branches.forEach((b, i) => {
+      const open = b.when === null ? '(' : `${b.when} ? (`
+      segs.push(i === 0 ? open : `) : ${open}`)
+      segs.push(bodies[i].join('\n'))
+    })
+    segs.push(hasElse ? ')' : ') : null')
+    return `${a.name}={${'\n'}${segs.join('\n')}${'\n'}${' '.repeat(col)}}`
   }
   // The value's true start column is just past `name={`; its break layout
   // (body at col+2, closing at col) shares the attribute line's indent.

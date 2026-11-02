@@ -31,6 +31,7 @@ import { resolveInteraction } from '@/lib/interactions/resolve'
 import { stateEntry, setterName } from '@/lib/state/screen-state'
 
 import { RawCode } from './format'
+import type { ApiListEmission } from './api-list'
 import type { JsxAttr } from './jsx'
 
 /** The per-file emission-usage flags node emitters mark (see EmitContext). */
@@ -40,6 +41,13 @@ export interface EmitUsage {
   /** State entry NAMES referenced by handlers or {state.x} bindings →
    *  emit `const [name, setName] = useState(initial)` for the declared ones. */
   state: Set<string>
+  /**
+   * Phase 4 (P0-3): the screen's API-backed lists, keyed by node id —
+   * populated by renderScreenFile (collectApiLists) BEFORE tree emission;
+   * the list emitters read the identifiers for data/refreshing/onRefresh,
+   * and the screen file appends the fetch declarations.
+   */
+  api: Map<string, ApiListEmission>
 }
 
 /** The expo-router href for a screen: `/(group)/route` or `/route`. */

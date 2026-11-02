@@ -32,8 +32,10 @@ import {
   listSections,
   roleOfNode
 } from '@/lib/lists/bindings'
+import { API_PROP_KEYS, parseErrorBinding } from '@/lib/lists/api-source'
 
 import { RawCode } from './format'
+import type { ApiListEmission } from './api-list'
 import { interactionHookAttr, type EmitUsage } from './interactions'
 import { fieldDefault, resolveEntry } from './registry'
 import type { NormalizedEntry } from './registry'
@@ -55,15 +57,19 @@ export interface EmitContext {
 
 /** Fresh context for one file (renderScreenFile). */
 export function newEmitContext(imports: ImportCollector, data: ProjectData): EmitContext {
-  return { imports, paint: newPaintUsage(), data, usage: { router: false, state: new Set() } }
+  return { imports, paint: newPaintUsage(), data, usage: { router: false, state: new Set(), api: new Map() } }
 }
 
-/** Per-subtree emission options (Phase 2 lists). */
+/** Per-subtree emission options (Phase 2 lists + Phase 4 P0-3). */
 export interface EmitOpts {
   /** True while emitting a repeated item template / section header: text
    * fields and image sources turn {item.…}/{section.…} bindings into real
    * expressions. The flag flows down the whole subtree. */
   itemBinding?: boolean
+  /** The error-state identifier while emitting an API list's ERROR-role
+   * design (Phase 4 P0-3): {error} / {error.message} text bindings become
+   * the real variable. Flows down the whole design subtree. */
+  errorVar?: string
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -138,6 +144,17 @@ const PROP_TRANSFORMS: Record<string, Record<string, (v: unknown) => JsxAttr | n
 }
 
 /**
+ * Registry prop keys that are BUILDER CONFIG, never component attributes:
+ * the API data-source fields (Phase 4 P0-3). Stripped for every list node
+ * (top-level API lists remap them to the fetch lifecycle; nested/static
+ * lists never carry them into generated code).
+ */
+const STRIP_PROP_KEYS: Record<string, readonly string[]> = {
+  flatlist: API_PROP_KEYS,
+  sectionlist: API_PROP_KEYS,
+}
+
+/**
  * Generic explicit-only props: known fields in registry order, then unknown
  * model props (forward compatibility) alphabetically. Nulls are treated as
  * unset (builder removal semantics). Renames/fanouts apply to both streams.
@@ -147,6 +164,7 @@ function propAttrs(node: ProjectNode, entry: NormalizedEntry): JsxAttr[] {
   const known = new Set(entry.fields.map((x) => x.key))
   const renames = PROP_RENAMES[node.type] ?? {}
   const fanout = PROP_FANOUT[node.type] ?? {}
+  const stripped = new Set(STRIP_PROP_KEYS[node.type] ?? [])
 
   const push = (key: string, v: unknown): void => {
     const rename = renames[key]
@@ -166,10 +184,11 @@ function propAttrs(node: ProjectNode, entry: NormalizedEntry): JsxAttr[] {
     if (field.type === 'text') continue // text fields are JSX children, not attributes
     const v = node.props[field.key]
     if (v === undefined || v === null) continue
+    if (stripped.has(field.key)) continue // builder config — never a component attribute
     push(field.key, v)
   }
   const unknown = Object.keys(node.props)
-    .filter((k) => !known.has(k) && k !== 'style' && node.props[k] !== undefined && node.props[k] !== null)
+    .filter((k) => !known.has(k) && k !== 'style' && !stripped.has(k) && node.props[k] !== undefined && node.props[k] !== null)
     .sort()
   for (const k of unknown) push(k, node.props[k])
   return attrs
@@ -313,11 +332,12 @@ function emitDefault(node: ProjectNode, entry: NormalizedEntry, childEls: JsxEle
 
 /**
  * The entry's text-content field as a child, binding-aware (Phase 2 lists +
- * Phase 4 slice 2 state): inside a repeated item template a safe {item.…}
+ * Phase 4 state/P0-3): inside a repeated item template a safe {item.…}
  * value becomes a raw expression child (`<Text>{item.title}</Text>`); a
  * {state.x} value becomes the bare useState variable (`<Text>{busy}</Text>`)
  * when declared on the node's screen — undeclared names stay literal text,
- * the honest signal. Otherwise the literal text.
+ * the honest signal. Inside an API list's error design, {error} /
+ * {error.message} become the error-state variable. Otherwise the literal text.
  */
 function pushTextFieldChild(children: JsxChild[], node: ProjectNode, entry: NormalizedEntry, opts: EmitOpts, ctx: EmitContext): void {
   const textField = entry.fields.find((x) => x.type === 'text')
@@ -342,6 +362,10 @@ function pushTextFieldChild(children: JsxChild[], node: ProjectNode, entry: Norm
       }
       // Undeclared name → literal text (the raw {state.x} shows — honest).
     }
+  }
+  if (opts.errorVar && typeof value === 'string' && parseErrorBinding(value)) {
+    children.push(exprChild(opts.errorVar))
+    return
   }
   children.push(textChild(String(value)))
 }
@@ -409,7 +433,11 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
       ctx.usage.state.add(stateName)
     }
   }
-  const titleExpr = labelExpr ?? stateLabelExpr
+  // Error-bound label (Phase 4 P0-3): {error} inside an API list's error
+  // design → the error-state variable, on both label surfaces.
+  const errorLabelExpr =
+    opts.errorVar && typeof rawLabel === 'string' && parseErrorBinding(rawLabel) ? opts.errorVar : null
+  const titleExpr = labelExpr ?? stateLabelExpr ?? errorLabelExpr
 
   /* ── RN Button: the platform look — no box/typography styles, required
    * onPress, `color` only when set. ── */
@@ -599,12 +627,19 @@ function takeAttr(attrs: JsxAttr[], name: string): unknown {
   return a.value.kind === 'string' ? a.value.value : a.value.kind === 'raw' ? a.value.value : undefined
 }
 
-/** Emit the once-per-list chrome (header/footer/separator/empty) as an element. */
-function emitChrome(tn: TreeNode, ctx: EmitContext, role: 'header' | 'footer' | 'separator' | 'empty'): JsxElement | null {
+/** Emit the once-per-list chrome (header/footer/separator/empty/loading/error)
+ *  as an element. `opts` threads the error-state identifier into the ERROR
+ *  design ({error} bindings) — the one chrome kind with bindings. */
+function emitChrome(
+  tn: TreeNode,
+  ctx: EmitContext,
+  role: 'header' | 'footer' | 'separator' | 'empty' | 'loading' | 'error',
+  opts: EmitOpts = {}
+): JsxElement | null {
   const els: JsxElement[] = []
   for (const c of tn.children) {
     if (c.node.hidden || roleOfNode(c.node) !== role) continue
-    const e = emitTreeNode(c, ctx)
+    const e = emitTreeNode(c, ctx, opts)
     if (e) els.push(e)
   }
   if (els.length === 0) return null
@@ -648,24 +683,44 @@ function emitFlatList(tn: TreeNode, entry: NormalizedEntry, ctx: EmitContext): J
   const gap = spacingAttr(node, entry)
   if (gap) attrs.push(gap)
 
-  // data: explicit rows, else the registry default — emitted as a clean literal.
+  /* Data source (Phase 4 P0-3). API: the rows live in screen-scope state —
+   * `data={x}` — fed by the real-fetch useEffect/useCallback block the screen
+   * file emits (usage.api was seeded before tree emission). Static: explicit
+   * rows, else the registry default — emitted as a clean literal. */
+  const api = ctx.usage.api.get(node.id)
   takeAttr(attrs, 'data')
-  const dataValue = node.props.data ?? fieldDefault(entry, 'data')
-  const rows = listItems({ data: dataValue }).map((row) => itemLiteral(row))
-  attrs.push({ name: 'data', value: { kind: 'raw', value: rows } })
+  if (api) {
+    attrs.push({ name: 'data', value: { kind: 'raw', value: new RawCode(api.ids.data) } })
+    if (api.ids.refreshing) {
+      attrs.push({ name: 'refreshing', value: { kind: 'raw', value: new RawCode(api.ids.refreshing) } })
+      attrs.push({
+        name: 'onRefresh',
+        value: {
+          kind: 'raw',
+          value: new RawCode(`() => { set${capitalize(api.ids.refreshing)}(true); ${api.ids.loader}(); }`)
+        }
+      })
+    }
+  } else {
+    const dataValue = node.props.data ?? fieldDefault(entry, 'data')
+    const rows = listItems({ data: dataValue }).map((row) => itemLiteral(row))
+    attrs.push({ name: 'data', value: { kind: 'raw', value: rows } })
+  }
 
   // The repeated item template — bindings on.
   attrs.push({ name: 'renderItem', value: { kind: 'arrow', params: '{ item }', value: emitItemTemplate(tn, ctx) } })
 
-  // Once-per-list chrome.
+  /* Once-per-list chrome. API lists compose the state-dependent designs
+   * (loading → error → empty) into ListEmptyComponent's conditional — the
+   * exact composition the live preview renders. */
   const header = emitChrome(tn, ctx, 'header')
   if (header) attrs.push({ name: 'ListHeaderComponent', value: { kind: 'jsx', value: header } })
   const footer = emitChrome(tn, ctx, 'footer')
   if (footer) attrs.push({ name: 'ListFooterComponent', value: { kind: 'jsx', value: footer } })
   const separator = emitChrome(tn, ctx, 'separator')
   if (separator) attrs.push({ name: 'ItemSeparatorComponent', value: { kind: 'jsx', value: separator } })
-  const empty = emitChrome(tn, ctx, 'empty')
-  if (empty) attrs.push({ name: 'ListEmptyComponent', value: { kind: 'jsx', value: empty } })
+  const emptyAttr = listEmptyAttr(tn, ctx, api)
+  if (emptyAttr) attrs.push(emptyAttr)
 
   const style = orderedStyle(paintsForCodegen(node.style, ctx.paint))
   if (Object.keys(style).length > 0) attrs.push(styleAttr(style))
@@ -677,13 +732,33 @@ function emitSectionList(tn: TreeNode, entry: NormalizedEntry, ctx: EmitContext)
   registerComponent(entry, ctx.imports) // SectionList
   const attrs: JsxAttr[] = propAttrs(node, entry)
 
-  // sections: explicit, else the registry default → RN shape { header, data }.
-  const sectionsValue = node.props.sections ?? fieldDefault(entry, 'sections')
-  const sections = listSections({ sections: sectionsValue }).map((s) => ({
-    ...(s.header !== undefined ? { header: s.header } : {}),
-    data: s.items.map((row) => itemLiteral(row))
-  }))
-  attrs.push({ name: 'sections', value: { kind: 'raw', value: sections } })
+  /* sections (Phase 4 P0-3): API mode binds the screen-scope state variable
+   * fed by the real-fetch declarations; static mode emits the RN shape
+   * ({ header, data }) from the editor rows. takeAttr first — propAttrs
+   * already pushed the editor-shaped value (this also fixes a pre-Phase-4
+   * bug: an explicitly EDITED sections array emitted the attribute twice). */
+  takeAttr(attrs, 'sections')
+  const api = ctx.usage.api.get(node.id)
+  if (api) {
+    attrs.push({ name: 'sections', value: { kind: 'raw', value: new RawCode(api.ids.data) } })
+    if (api.ids.refreshing) {
+      attrs.push({ name: 'refreshing', value: { kind: 'raw', value: new RawCode(api.ids.refreshing) } })
+      attrs.push({
+        name: 'onRefresh',
+        value: {
+          kind: 'raw',
+          value: new RawCode(`() => { set${capitalize(api.ids.refreshing)}(true); ${api.ids.loader}(); }`)
+        }
+      })
+    }
+  } else {
+    const sectionsValue = node.props.sections ?? fieldDefault(entry, 'sections')
+    const sections = listSections({ sections: sectionsValue }).map((s) => ({
+      ...(s.header !== undefined ? { header: s.header } : {}),
+      data: s.items.map((row) => itemLiteral(row))
+    }))
+    attrs.push({ name: 'sections', value: { kind: 'raw', value: sections } })
+  }
 
   // Rows: one item template, repeated per row (bindings on).
   attrs.push({ name: 'renderItem', value: { kind: 'arrow', params: '{ item }', value: emitItemTemplate(tn, ctx) } })
@@ -705,16 +780,49 @@ function emitSectionList(tn: TreeNode, entry: NormalizedEntry, ctx: EmitContext)
   const gap = spacingAttr(node, entry)
   if (gap) attrs.push(gap)
 
-  // Once-per-list chrome (footer / separator / empty; no page header for
-  // sectionlist — role 'header' is the SECTION header above).
+  // Once-per-list chrome (footer / separator; no page header for sectionlist
+  // — role 'header' is the SECTION header above). API lists compose the
+  // loading → error → empty designs into ListEmptyComponent's conditional.
   const footer = emitChrome(tn, ctx, 'footer')
   if (footer) attrs.push({ name: 'ListFooterComponent', value: { kind: 'jsx', value: footer } })
   const separator = emitChrome(tn, ctx, 'separator')
   if (separator) attrs.push({ name: 'ItemSeparatorComponent', value: { kind: 'jsx', value: separator } })
-  const empty = emitChrome(tn, ctx, 'empty')
-  if (empty) attrs.push({ name: 'ListEmptyComponent', value: { kind: 'jsx', value: empty } })
+  const emptyAttr = listEmptyAttr(tn, ctx, api)
+  if (emptyAttr) attrs.push(emptyAttr)
 
   const style = orderedStyle(paintsForCodegen(node.style, ctx.paint))
   if (Object.keys(style).length > 0) attrs.push(styleAttr(style))
   return el(entry.component, attrs)
+}
+
+/* ── API composition helpers (Phase 4 P0-3) ─────────────────────────────── */
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/**
+ * ListEmptyComponent for flatlist/sectionlist. Static lists: the plain empty
+ * design, exactly as Phase 2 emitted it. API lists: the state-dependent
+ * designs compose into a conditional — `loading ? (…) : error ? (…) : (…)`
+ * — mirroring the live preview's composition; {error} bindings inside the
+ * error design resolve against the error-state variable. Null when nothing
+ * is designed (no designed state → nothing rendered; the builder never
+ * injects UI the user didn't draw).
+ */
+function listEmptyAttr(
+  tn: TreeNode,
+  ctx: EmitContext,
+  api: ApiListEmission | undefined
+): JsxAttr | null {
+  const empty = emitChrome(tn, ctx, 'empty')
+  if (!api) return empty ? { name: 'ListEmptyComponent', value: { kind: 'jsx', value: empty } } : null
+  const loading = emitChrome(tn, ctx, 'loading')
+  const error = emitChrome(tn, ctx, 'error', { errorVar: api.ids.error })
+  if (!loading && !error) return empty ? { name: 'ListEmptyComponent', value: { kind: 'jsx', value: empty } } : null
+  const branches: { when: string | null; el: JsxElement }[] = []
+  if (loading) branches.push({ when: api.ids.loading, el: loading })
+  if (error) branches.push({ when: api.ids.error, el: error })
+  if (empty) branches.push({ when: null, el: empty })
+  return { name: 'ListEmptyComponent', value: { kind: 'cond', branches } }
 }
