@@ -36,6 +36,9 @@
 - Reference-app study → `docs/research/capability-matrix.md` (Appwrite-Native, Crimson, TravelMate cloned; **z.ai-mobile is 404** — re-check later; Keystone read from upload/). Verdict: builder wins on visual shell + real router codegen, but is an "interactive mockup" — **P0 ladder: events → lists → data → auth → forms** (each used by 3–4/4 apps). Streaming 0/4 (not needed for parity); maps/charts 1/4 each.
 - Audit compiled → `docs/13-phase0-audit.md`: inventory (working/needs improvement/partial/broken/missing), both flicker bugs located with fix directions (crossfade alpha-stacking; tooltip enter/leave), phase acceptance criteria, dependencies.
 
+### 2026-11-02 — session restore after sandbox reset
+- Sandbox reset reverted the working tree to the platform Next.js template (builder sources, docs, WORKLOG gone locally). Restored everything from `origin/main` @ c4ba001; re-ran `bun install`; vitest **49/49**; `tsc --noEmit` had one latent error from the Phase 1 push (tests/paint.test.ts accessed `.angle` on the `GradientPaint` union — fixed with a linear type-guard narrow; test semantics unchanged). `.env` + `upload/` (untracked) preserved through the reset.
+
 ---
 
 ## ◐ IN PROGRESS — next: Phase 2 (component insertion)

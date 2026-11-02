@@ -51,6 +51,7 @@ describe('paint type guards + normalization', () => {
 
   it('normalizeGradient keeps ≥2 stops and wraps the angle', () => {
     const g = normalizeGradient({ type: 'linear-gradient', angle: 400, stops: [{ color: '#fff', position: 0.5 }] })
+    if (g.type !== 'linear-gradient') throw new Error('expected a linear gradient after normalization')
     expect(g.angle).toBe(40)
     expect(g.stops.length).toBeGreaterThanOrEqual(2)
   })
