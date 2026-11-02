@@ -16,7 +16,10 @@
  *
  * - SafeAreaView ALWAYS from 'react-native-safe-area-context' (never RN core);
  *   skipped entirely (no wrapper, no import) when no edges are enabled.
- * - No react import in v1 (no hooks needed — behavior/Flows is a later module).
+ * - Wired interactions (Phase 4 P0-1) add `useRouter` from expo-router + a
+ *   component-scope `const router = useRouter()` — exactly when some node in
+ *   the tree emitted a handler (ctx.nav.router), never otherwise.
+ * - No react import in v1 (no state hooks yet — the flow/state module owns those).
  * - NEVER StyleSheet — all styles are inline literals.
  */
 
@@ -34,7 +37,7 @@ import type { JsxAttr, JsxElement } from './jsx'
 
 export function renderScreenFile(data: ProjectData, screen: Screen): string {
   const imports = new ImportCollector()
-  const ctx = newEmitContext(imports)
+  const ctx = newEmitContext(imports, data)
 
   const tree = buildScreenTree(data, screen.id)
   const elements: JsxElement[] = []
@@ -86,10 +89,12 @@ export function renderScreenFile(data: ProjectData, screen: Screen): string {
    * follows the plain-TS theme pattern (constants/theme.ts, no NativeWind). */
   const usesTokens = ctx.paint.tokens.size > 0
   if (usesTokens) imports.addNamed('@/hooks/useTheme', 'useTheme')
+  if (ctx.nav.router) imports.addNamed('expo-router', 'useRouter')
   const importLines = imports.render()
   lines.push(...importLines)
   lines.push('')
   lines.push(`export default function ${componentName}() {`)
+  if (ctx.nav.router) lines.push('  const router = useRouter();')
   if (usesTokens) lines.push('  const { colors } = useTheme();')
   lines.push('  return (')
   lines.push(...renderElement(root, 4))

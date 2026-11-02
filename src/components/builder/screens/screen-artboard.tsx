@@ -51,6 +51,7 @@ import { InlineTextEditor } from '../canvas/inline-text-edit'
 import { useNodeEdit } from '../canvas/node-edit'
 import { NodeHoverOutline, SelectionOverlay } from '../canvas/selection-overlay'
 import { paletteResolver, paintSwatchBackground } from '@/lib/paint'
+import type { PreviewNav } from '@/lib/interactions/resolve'
 import { SELECTION_COLOR } from './canvas-constants'
 import { deviceById, type DevicePreset, type PlatformId } from './device-presets'
 
@@ -335,6 +336,20 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
     if (useProjectStore.getState().sim.on) simBack(screen.id)
   }, [screen.id, simBack])
 
+  /* Wired interactions (Phase 4, P0-1): the same sim runtime, handed to the
+   * RNW tree via context. Only in Sim mode — the edit pane swallows pointer
+   * events while editing, and inert buttons there are the honest state. */
+  const nav = useMemo<PreviewNav | null>(
+    () =>
+      simOn
+        ? {
+            navigate: (target: string, mode: 'push' | 'replace') => simNavigate(screen.id, target, mode),
+            back: () => simBack(screen.id)
+          }
+        : null,
+    [simOn, screen.id, simNavigate, simBack]
+  )
+
   const frameShadow = useMemo(() => {
     if (simOn) return `0 0 0 2px var(--color-accent), 0 12px 32px rgb(0 0 0 / 0.45)`
     if (selectedNodeId) return '0 1px 0 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.35)'
@@ -400,7 +415,7 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
              */}
             {beneathScreen && beneathScreen.id !== shownScreen.id && (
               <div className="absolute inset-0 flex" style={{ zIndex: 1, pointerEvents: 'none' }}>
-                <ScreenTreePreview screen={beneathScreen} nodes={nodes} platform={platform} />
+                <ScreenTreePreview screen={beneathScreen} nodes={nodes} platform={platform} nav={nav ?? undefined} />
               </div>
             )}
             <motion.div
@@ -411,7 +426,7 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
               animate={{ opacity: 1 }}
               transition={{ duration: reducedMotion ? 0 : 0.15 }}
             >
-              <ScreenTreePreview screen={shownScreen} nodes={nodes} platform={platform} />
+              <ScreenTreePreview screen={shownScreen} nodes={nodes} platform={platform} nav={nav ?? undefined} />
             </motion.div>
 
             {!simOn && !hasNodes && (

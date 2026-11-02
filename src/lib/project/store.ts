@@ -25,9 +25,11 @@ import type {
   CustomTabBarConfig,
   EditorUiState,
   InsertTool,
+  InteractionAction,
   NavConfig,
   NavKind,
   NodeAnimations,
+  NodeInteractions,
   ProjectData,
   ProjectNode,
   Screen,
@@ -477,6 +479,9 @@ interface ProjectState {
   /** Phase 2: set the list role of a DIRECT child of a list node
    *  (flatlist/sectionlist). undefined role = 'item'. */
   setNodeListRole: (id: string, role: 'item' | 'header' | 'footer' | 'separator' | 'empty') => void
+  /** Phase 4 (P0-1): wire (or unwire with null) one event hook on a node to
+   *  an interaction action. One undo entry per wiring change. */
+  setNodeInteraction: (id: string, hook: string, action: InteractionAction | null) => void
   /** Patch entering/exiting animation specs (undefined value removes the phase). */
   patchNodeAnimations: (id: string, patch: Partial<NodeAnimations>) => void
   /** Replace preserved verbatim attribute source (code-controlled props). */
@@ -1174,6 +1179,34 @@ export const useProjectStore = create<ProjectState>()(
             }
             return {
               data: { ...st.data, nodes: { ...st.data.nodes, [id]: { ...node, impl: implId, props } } }
+            }
+          }),
+
+        /* ── interactions (Phase 4, P0-1) ───────────────────────────────── */
+        setNodeInteraction: (id, hook, action) =>
+          commit((st) => {
+            const node = st.data.nodes[id]
+            if (!node) return {}
+            // Only hooks the node's registry entry declares are wireable —
+            // the same validation surface the inspector offers.
+            const entry = getEntry(node.type)
+            if (!entry || !entry.hooks?.some((h) => h.hook === hook)) return {}
+            const prev = node.interactions ?? {}
+            let next: NodeInteractions
+            if (action) next = { ...prev, [hook]: action }
+            else {
+              next = { ...prev }
+              delete next[hook]
+            }
+            const hasAny = Object.keys(next).length > 0
+            return {
+              data: {
+                ...st.data,
+                nodes: {
+                  ...st.data.nodes,
+                  [id]: hasAny ? { ...node, interactions: next } : { ...node, interactions: undefined }
+                }
+              }
             }
           }),
 

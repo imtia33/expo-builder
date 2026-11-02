@@ -165,6 +165,20 @@ export interface NodeAnimations {
  * Hierarchy
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/* Phase 4 (P0-1): wired event handlers, keyed by hook name ('onPress'). */
+export type InteractionAction =
+  /** Navigate to a screen. `mode` mirrors expo-router: 'push' stacks,
+   *  'replace' swaps the top of the stack (tab-switch semantics). */
+  | { kind: 'navigate'; screenId: string; mode: 'push' | 'replace' }
+  /** Pop the current stack — `router.back()`. */
+  | { kind: 'back' }
+
+/** Wired hooks on a node: hook name → action. One action per hook in v1.
+ *  The single-step degenerate case of the docs/05 flow model — multi-step
+ *  flows can supersede `InteractionAction` with a step list without a
+ *  migration (consumers resolve one action per hook today). */
+export type NodeInteractions = Record<string, InteractionAction>
+
 export interface ScreenGroup {
   id: string
   /** Display name, e.g. 'Main'. */
@@ -234,6 +248,13 @@ export interface ProjectNode {
   style: Record<string, unknown>
   /** Reanimated entering/exiting animation specs. */
   animations?: NodeAnimations
+  /**
+   * Phase 4 (P0-1): wired event handlers keyed by registry hook name
+   * ('onPress'). Absent = no wiring (code-controlled, as before). Dangling
+   * targets (screen deleted after wiring) resolve to UNWIRED at render +
+   * codegen time — never dead code.
+   */
+  interactions?: NodeInteractions
   /**
    * Attribute source preserved verbatim from hand code edits for props the
    * visual editor cannot represent (expressions, functions, …). Emitted as-is;

@@ -17,10 +17,12 @@
 
 
 import { useProjectStore } from '@/lib/project/store'
-import type { ProjectNode } from '@/lib/project/types'
+import type { InteractionAction, ProjectNode, Screen, ScreenGroup } from '@/lib/project/types'
 import { propOptions, effectiveProps, resolveImplementation } from '@/expoforge/registry'
 import type { PropField, RegistryEntry } from '@/expoforge/registry'
 import { isListEntryType, LIST_ROLE_LABEL, type ListRole } from '@/lib/lists/bindings'
+import { resolveInteraction } from '@/lib/interactions/resolve'
+import { screenHref } from '@/lib/codegen/interactions'
 import { cn } from '@/lib/utils'
 import { CollapsibleSection } from '../collapsible-section'
 import { SectionFields } from '../field-grid'
@@ -180,16 +182,93 @@ export interface PropsTabProps {
   className?: string
 }
 
+/* ── Interaction section (Phase 4, P0-1) ──────────────────────────────────── */
+
+/** Field ids: `__ia-<hook>` (action kind), `__ia-<hook>@screen`, `__ia-<hook>@mode`. */
+const IA_PREFIX = '__ia-'
+/** Radix Select items cannot carry empty-string values — the unwired state
+ *  uses this sentinel instead. */
+const IA_NONE = 'none'
+
+function parseIaField(fieldId: string): { hook: string; part: 'action' | 'screen' | 'mode' } | null {
+  if (!fieldId.startsWith(IA_PREFIX)) return null
+  const rest = fieldId.slice(IA_PREFIX.length)
+  const at = rest.indexOf('@')
+  if (at === -1) return { hook: rest, part: 'action' }
+  const part = rest.slice(at + 1)
+  if (part !== 'screen' && part !== 'mode') return null
+  return { hook: rest.slice(0, at), part }
+}
+
+function interactionSection(
+  entry: RegistryEntry,
+  node: ProjectNode,
+  screens: Screen[],
+  groups: ScreenGroup[]
+): PanelSection | null {
+  if (!entry.hooks || entry.hooks.length === 0) return null
+  const entries: PanelSection['entries'] = []
+  for (const { hook, label } of entry.hooks) {
+    // The stored value may be dangling (target screen deleted): show the
+    // kind but an EMPTY screen select — re-picking completes the wiring.
+    const stored = node.interactions?.[hook]
+    const kind = stored ? (resolveInteraction(stored, screens) ? stored.kind : (stored as InteractionAction).kind) : ''
+    entries.push({
+      kind: 'select',
+      id: `${IA_PREFIX}${hook}`,
+      label,
+      value: kind === '' ? IA_NONE : kind,
+      defaultValue: IA_NONE,
+      options: [
+        { value: IA_NONE, label: 'None' },
+        { value: 'navigate', label: 'Navigate to screen' },
+        { value: 'back', label: 'Go back' }
+      ]
+    })
+    if (kind === 'navigate') {
+      const current = stored?.kind === 'navigate' ? stored : null
+      const screenOk = current && screens.some((s) => s.id === current.screenId)
+      entries.push({
+        kind: 'select',
+        id: `${IA_PREFIX}${hook}@screen`,
+        label: 'Screen',
+        value: screenOk ? current.screenId : undefined,
+        defaultValue: undefined,
+        options: screens.map((s) => ({
+          value: s.id,
+          label: `${s.name}${s.id === node.screenId ? ' · current' : ''} (${screenHref(s, { groups })})`
+        }))
+      })
+      entries.push({
+        kind: 'segmented',
+        id: `${IA_PREFIX}${hook}@mode`,
+        label: 'Open',
+        value: current?.mode ?? 'push',
+        defaultValue: 'push',
+        options: [
+          { value: 'push', label: 'Push' },
+          { value: 'replace', label: 'Replace' }
+        ]
+      })
+    }
+  }
+  return { id: 'props-interaction', title: 'Interaction', entries }
+}
+
 export function PropsTab({ node, entry, className }: PropsTabProps) {
   const setNodeProps = useProjectStore((s) => s.setNodeProps)
   const setNodeName = useProjectStore((s) => s.setNodeName)
   const setNodeImpl = useProjectStore((s) => s.setNodeImpl)
   const setNodeListRole = useProjectStore((s) => s.setNodeListRole)
+  const setNodeInteraction = useProjectStore((s) => s.setNodeInteraction)
   const beginGesture = useProjectStore((s) => s.beginGesture)
   const endGesture = useProjectStore((s) => s.endGesture)
   // The parent node (list membership decides the List-role section).
   const parent = useProjectStore((s) => (node.parentId ? s.data.nodes[node.parentId] ?? null : null))
   const parentIsList = parent !== null && isListEntryType(parent.type)
+  // Interaction wiring surface (Phase 4): every screen is a legal target.
+  const screens = useProjectStore((s) => s.data.screens)
+  const groups = useProjectStore((s) => s.data.groups)
 
   function handleFieldChange(_sectionId: string, fieldId: string, value: FieldChangeValue) {
     if (fieldId === '__name') {
@@ -203,6 +282,32 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
     if (fieldId === '__role') {
       if (typeof value === 'string' && LIST_ROLES.includes(value as ListRole)) {
         setNodeListRole(node.id, value as ListRole)
+      }
+      return
+    }
+    const ia = parseIaField(fieldId)
+    if (ia) {
+      const stored = node.interactions?.[ia.hook]
+      if (typeof value !== 'string') return
+      if (ia.part === 'action') {
+        if (value === IA_NONE) setNodeInteraction(node.id, ia.hook, null)
+        else if (value === 'back') setNodeInteraction(node.id, ia.hook, { kind: 'back' })
+        else if (value === 'navigate')
+          setNodeInteraction(node.id, ia.hook, {
+            kind: 'navigate',
+            screenId: stored?.kind === 'navigate' ? stored.screenId : '',
+            mode: stored?.kind === 'navigate' ? stored.mode : 'push'
+          })
+        return
+      }
+      if (stored?.kind !== 'navigate') return
+      if (ia.part === 'screen') {
+        if (value === '') return
+        setNodeInteraction(node.id, ia.hook, { kind: 'navigate', screenId: value, mode: stored.mode })
+        return
+      }
+      if (ia.part === 'mode' && (value === 'push' || value === 'replace')) {
+        setNodeInteraction(node.id, ia.hook, { kind: 'navigate', screenId: stored.screenId, mode: value })
       }
       return
     }
@@ -282,16 +387,21 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
       }
     : null
 
+  /* Interaction wiring (Phase 4, P0-1): registry-declared hooks become
+   * Navigate/Back actions — preview + codegen consume the same wiring. */
+  const iaSection = interactionSection(entry, node, screens, groups)
+
   const orderedSections: PanelSection[] = [
     nameSection,
     ...(implSection ? [implSection] : []),
     ...(roleSection ? [roleSection] : []),
+    ...(iaSection ? [iaSection] : []),
     ...sections
   ]
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin', className)}>
-      {sections.length === 0 && !implSection && !roleSection ? (
+      {sections.length === 0 && !implSection && !roleSection && !iaSection ? (
         <QuietHint
           icon="inspector.tab-props"
           title={`${entry.name} has no properties`}

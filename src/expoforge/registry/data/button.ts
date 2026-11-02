@@ -17,6 +17,10 @@
  * Button has no variant/hitSlop/typography). setNodeImpl keeps the keys that
  * exist in BOTH variants (title, disabled), so switching mid-design is safe.
  *
+ * Phase 4 (P0-1): the entry declares the `onPress` hook — wiring it to a
+ * Navigate/Back action works identically across ALL four implementations
+ * (preview + codegen), so the interaction survives implementation switches.
+ *
  * Variant presets (primary/secondary/ghost) are shared by the preview and the
  * code emitter (BUTTON_VARIANT_BASE in both files); node style always wins.
  * The RN-Button variant ignores them — it renders the platform style.
@@ -198,6 +202,7 @@ export const BUTTON_ENTRY: RegistryEntry = {
   insert: { width: 140, height: 48 },
   props: [],
   implementations: BUTTON_IMPLEMENTATIONS,
+  hooks: [{ hook: 'onPress', label: 'On press' }],
   styleSections: ['layout', 'spacing', 'appearance', 'typography', 'effects'],
   codegen: { import: "import { Pressable } from 'react-native'", component: 'Pressable', emitter: 'button' },
   previewNote:

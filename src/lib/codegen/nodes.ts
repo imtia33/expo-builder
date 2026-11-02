@@ -18,7 +18,7 @@
  *     lines exactly cover what the file uses (no unused imports).
  */
 
-import type { ProjectNode } from '@/lib/project/types'
+import type { ProjectNode, ProjectData } from '@/lib/project/types'
 import type { TreeNode } from '@/lib/project/store'
 
 import { getEntry } from '@/expoforge/registry'
@@ -33,6 +33,7 @@ import {
 } from '@/lib/lists/bindings'
 
 import { RawCode } from './format'
+import { interactionHookAttr } from './interactions'
 import { fieldDefault, resolveEntry } from './registry'
 import type { NormalizedEntry } from './registry'
 import { gradientAttrs, newPaintUsage, paintsForCodegen, type PaintUsage } from './paint'
@@ -45,11 +46,15 @@ export interface EmitContext {
   imports: ImportCollector
   /** Tracks theme-token usage so the screen file adds useTheme exactly when needed. */
   paint: PaintUsage
+  /** The whole project — interaction emitters resolve screen ids → hrefs. */
+  data: ProjectData
+  /** Interaction emission flags: which hook-providing modules this file needs. */
+  nav: { router: boolean }
 }
 
 /** Fresh context for one file (renderScreenFile). */
-export function newEmitContext(imports: ImportCollector): EmitContext {
-  return { imports, paint: newPaintUsage() }
+export function newEmitContext(imports: ImportCollector, data: ProjectData): EmitContext {
+  return { imports, paint: newPaintUsage(), data, nav: { router: false } }
 }
 
 /** Per-subtree emission options (Phase 2 lists). */
@@ -380,15 +385,20 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
 
   /* ── RN Button: the platform look — no box/typography styles, required
    * onPress, `color` only when set. ── */
+  /* Wired hook (Phase 4 P0-1): the RN-Button placeholder handler is
+   * REPLACED by the wired action; unwired buttons keep the placeholder. */
+  const wiredPress = interactionHookAttr('onPress', node, ctx.data, ctx.nav)
   if (implId === 'rnbutton') {
-    const attrs: JsxAttr[] = [
-      {
+    const pressAttr: JsxAttr =
+      wiredPress ?? {
         name: 'onPress',
         value: {
           kind: 'raw',
           value: new RawCode('() => { /* TODO: wire an action */ }')
         }
-      },
+      }
+    const attrs: JsxAttr[] = [
+      pressAttr,
       labelExpr
         ? { name: 'title', value: { kind: 'raw', value: new RawCode(labelExpr) } }
         : { name: 'title', value: { kind: 'string', value: label } }
@@ -413,6 +423,9 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
   const labelStyle = orderedStyle({ ...preset.label, ...typography })
 
   const attrs: JsxAttr[] = []
+  // Wired hook (Phase 4 P0-1) leads the attribute list; unwired buttons
+  // stay exactly as before (no dead handlers).
+  if (wiredPress) attrs.push(wiredPress)
   const disabled = node.props.disabled
   if (disabled !== undefined && disabled !== null) attrs.push(attrFromValue('disabled', disabled))
 

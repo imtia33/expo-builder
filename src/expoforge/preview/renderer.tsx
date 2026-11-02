@@ -15,7 +15,7 @@
  * children are plain strings; every prop below exists on the RNW 0.21.4 API
  * (verified against node_modules/react-native-web/dist/exports/*).
  */
-import { Fragment, useMemo, type ReactElement, type ReactNode } from 'react'
+import { Fragment, createContext, useContext, useMemo, type ReactElement, type ReactNode } from 'react'
 import {
   ActivityIndicator,
   Button,
@@ -46,6 +46,7 @@ import {
   roleOfNode,
   type ListItem
 } from '@/lib/lists/bindings'
+import { fireInteraction, type PreviewNav } from '@/lib/interactions/resolve'
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Child index (flat node map → per-parent ordered lists)
@@ -213,6 +214,29 @@ const CONTENT_FIT_TO_RESIZE_MODE: Record<string, 'cover' | 'contain' | 'stretch'
 const RESIZE_MODES = ['cover', 'contain', 'stretch', 'center', 'repeat'] as const
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Interaction runtime (Phase 4, P0-1)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The artboard provides the sim nav runtime (simNavigate/simBack on the
+ * per-artboard history) through context when Sim mode is on; PreviewNode
+ * consumes it wherever a registry hook is wired. Context — not another
+ * threaded prop — because the tree recursion (list templates included)
+ * already carries childIndex/platform/binding.
+ */
+const PreviewNavContext = createContext<PreviewNav | null>(null)
+
+/** Fire a node's wired hook, resolving against the CURRENT project (the
+ * store is read at click time, so a deleted target screen unwires live). */
+function useWiredHook(hook: string, node: ProjectNode): (() => void) | undefined {
+  const nav = useContext(PreviewNavContext)
+  return useMemo(() => {
+    if (!nav) return undefined
+    return () => fireInteraction(hook, node, useProjectStore.getState().data, nav)
+  }, [nav, hook, node])
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Node renderer — per-type RNW mapping
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -276,6 +300,10 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
    * nodes must not change the hook count). */
   const palette = useProjectStore((s) => s.data.theme?.colors)
   const themeMode = useProjectStore((s) => s.ui.themeMode)
+  /* Wired onPress (Phase 4, P0-1): resolved for every node (rules of hooks —
+   * unconditional), consumed only by components whose registry declares the
+   * hook (button today). Undefined in edit mode or when unwired. */
+  const wiredPress = useWiredHook('onPress', node)
 
   // Hidden nodes are skipped entirely (subtree included).
   if (node.hidden) return null
@@ -362,7 +390,7 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
             title={title}
             color={color}
             disabled={disabled}
-            onPress={() => {}}
+            onPress={wiredPress ?? (() => {})}
           />
         )
       }
@@ -374,6 +402,7 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
             style={{ ...preset.box, ...box }}
             disabled={disabled}
             activeOpacity={activeOpacity}
+            onPress={wiredPress}
           >
             <Text style={{ ...preset.label, ...label }}>{title}</Text>
           </TouchableOpacity>
@@ -389,13 +418,14 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
             disabled={disabled}
             activeOpacity={activeOpacity}
             underlayColor={underlayColor}
+            onPress={wiredPress}
           >
             <Text style={{ ...preset.label, ...label }}>{title}</Text>
           </TouchableHighlight>
         )
       }
       return (
-        <Pressable testID={node.id} style={{ ...preset.box, ...box }} disabled={disabled}>
+        <Pressable testID={node.id} style={{ ...preset.box, ...box }} disabled={disabled} onPress={wiredPress}>
           <Text style={{ ...preset.label, ...label }}>{title}</Text>
         </Pressable>
       )
@@ -691,9 +721,12 @@ export interface ScreenTreePreviewProps {
   nodes: Record<string, ProjectNode>
   /** Device platform — selects per-variant behavior (e.g. blurview). */
   platform: PlatformId
+  /** Sim runtime for wired interactions (Phase 4, P0-1). Absent (edit mode)
+   *  → wired hooks render inert, exactly like unwired ones. */
+  nav?: PreviewNav
 }
 
-export function ScreenTreePreview({ screen, nodes, platform }: ScreenTreePreviewProps) {
+export function ScreenTreePreview({ screen, nodes, platform, nav }: ScreenTreePreviewProps) {
   const childIndex = useMemo(() => buildChildIndex(nodes, screen.id), [nodes, screen.id])
   const roots = childIndex.get(null) ?? []
   /* Screen background is a paint value: solid hex, theme token, or gradient
@@ -710,10 +743,12 @@ export function ScreenTreePreview({ screen, nodes, platform }: ScreenTreePreview
   return (
     // Root View: fills the device-frame content area, carries the screen
     // background, and deliberately has NO testID (it is not a node).
-    <View style={rootStyle}>
-      {roots.map((node) => (
-        <PreviewNode key={node.id} node={node} childIndex={childIndex} platform={platform} />
-      ))}
-    </View>
+    <PreviewNavContext.Provider value={nav ?? null}>
+      <View style={rootStyle}>
+        {roots.map((node) => (
+          <PreviewNode key={node.id} node={node} childIndex={childIndex} platform={platform} />
+        ))}
+      </View>
+    </PreviewNavContext.Provider>
   )
 }

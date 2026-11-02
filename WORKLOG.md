@@ -41,7 +41,34 @@
 
 ---
 
-## ◐ IN PROGRESS — next: Phase 4 (capability gaps — P0 ladder: events → lists runtime → data → auth → forms)
+## ◐ IN PROGRESS — Phase 4 (capability gaps — P0 ladder: events → lists runtime → data → auth → forms)
+
+### ✔ 2026-11-02 — Phase 4 / slice 1: event wiring — P0-1, the navigate/back rung (COMPLETE)
+
+**Scope:** the #1 capability-matrix blocker (4/4 reference apps — "buttons exist but are inert") shipped as the two actions the builder can already execute END-TO-END: **Navigate (push/replace)** and **Back**. State/set-state/submit/open-modal actions stay unshipped until their systems exist (P1-6 state, P0-5 forms, P1-8 modals) — no decorative controls (rule 6/7).
+
+**Model** (`src/lib/project/types.ts`)
+- `InteractionAction = { kind:'navigate', screenId, mode:'push'|'replace' } | { kind:'back' }`; `NodeInteractions = Record<hook, InteractionAction>` on `ProjectNode.interactions`. Deliberately the single-step degenerate case of the docs/05 flow model — flows can later supersede the action type with step lists without a migration.
+- `RegistryEntry.hooks?: { hook, label }[]` — the wireable surface is registry-declared (button: `onPress` today), not hardcoded per component.
+
+**One resolver** (`src/lib/interactions/resolve.ts`) — preview, inspector, and codegen all validate through `resolveInteraction()`; `fireInteraction()` executes against the sim runtime. Dangling targets (screen deleted after wiring) resolve to UNWIRED everywhere: preview inert, codegen emits nothing, inspector shows the kind + an empty Screen select to re-pick. The wiring itself survives in the model.
+
+**Store** — `setNodeInteraction(id, hook, action | null)`: registry-validated (only declared hooks wireable), one undo entry per change, `interactions` key dropped entirely when the last hook unwires.
+
+**Inspector** — new "Interaction" section in the Props tab (after Implementation/List role): action select (None/Navigate/Go back) → screen select (every screen, labeled `Name (/href)`, own screen marked `· current`) → Push/Replace segmented. One Radix pitfall found live: **Select items cannot carry empty-string values** — the unwired state uses a `'none'` sentinel (this crashed the panel on first run; fixed and verified).
+
+**Preview** — `PreviewNavContext` (context, not another threaded prop — the recursion already carries childIndex/platform/binding). The artboard provides `{ navigate, back }` bound to its own sim history, ONLY in sim mode (edit mode stays inert — the honest state; the edit pane swallows pointer events anyway). All four button implementations render the wired `onPress`; store is read at click time so a deleted target unwires live. RNW Button keeps its no-op fallback (rendering requirement) when unwired.
+
+**Codegen** (`src/lib/codegen/interactions.ts` + nodes/screens)
+- `screenHref()`: `/(group)/route` for grouped screens (the same group-prefixed name form the layout emitters use for Stack.Screen/Tabs.Screen), `/route` standalone — belt-and-braces since route slugs are globally unique.
+- Handler attr `onPress={() => { router.push('/(main)/detail'); }}` — inline arrow, valid at screen level AND inside list renderItem templates. `useRouter` imported + `const router = useRouter()` emitted exactly when some handler was emitted (`ctx.nav.router`), never otherwise.
+- RN Button: the wired action REPLACES the `/* TODO: wire an action */` placeholder; unwired keeps it. Composite variants gain the handler as the leading attr only when wired — unwired emission is byte-identical to before (pinned by tests).
+
+**Verification**
+- vitest **91/91** (76 + 15 new: resolver, store wiring/unwire/validation/undo, href forms, all four impls, item-template button inside renderItem, no-router backward compat, dangling-target no-op, full-file @babel/parser parse). `tsc --noEmit` clean; eslint clean on changed files (the 6 `react-hooks/refs` errors in screen-artboard.tsx pre-exist at HEAD — Phase 3's deliberate read-during-render pattern, not touched).
+- Live browser (agent-browser, DOM-level): Interaction section renders on button select; wired On press → Navigate → Screen 2 (push); **Sim mode: clicking the button swaps Screen 1's artboard to Screen 2's tree** (text marker node appears at artboard-1 coordinates); a second button on Screen 2 wired to Go back returns the artboard to Screen 1's tree (full round trip); Code tab: Screen 1 file emits `import { useRouter } from 'expo-router'` + `const router = useRouter();` + `onPress={() => { router.push('/screen-2'); }}`, Screen 2 file emits `router.back()` and no push; switching the wired button to the RN Button implementation keeps the wiring and replaces the TODO placeholder in generated code.
+
+**Next (Phase 4 remaining):** P0-3 data/API binding (mock API layer + fetch + loading/error/empty), P0-4 auth, P0-5 forms — each builds on the state model (P1-6). P0-2's remainder (pull-to-refresh/refreshing, loading states) also waits on state.
 
 ### ✔ 2026-11-02 — Phase 5: regression verification (COMPLETE)
 
@@ -158,6 +185,11 @@ Extended the EXISTING Add Element / registry / rendering infrastructure — no s
 
 ### Phase 4 — Capability gaps (only what the reference matrix proves relevant)
 Filled after the Phase 0 matrix; candidates already visible: flows/interactions wiring, lists runtime, data binding, theme system, custom components. No speculative features.
+- [x] **Slice 1 (P0-1 event wiring) — DONE 2026-11-02, see above:** registry-declared hooks (button `onPress` today) wire to Navigate (push/replace) / Back — one resolver, sim runtime, inspector section, expo-router codegen (inline handlers incl. list item templates; RN-Button placeholder replaced; dangling targets emit nothing).
+- [ ] P0-3 data/API binding (mock API layer, fetch, loading/error/empty states) — needs the state model.
+- [ ] P0-4 auth flows — needs state + data.
+- [ ] P0-5 forms (validation, secure entry, submit lifecycle) — needs state + events(actions beyond nav).
+- [ ] P1-6 state management (screen state + app store) — the enabler for the above + set-state actions + P0-2's remainder (pull-to-refresh, loading states).
 
 ### Phase 5 — Verification ✔ DONE (2026-11-02, see above)
 - [x] Existing projects still open; existing screens intact; existing components functional (pre-Phase-2 fixture + live persistence).

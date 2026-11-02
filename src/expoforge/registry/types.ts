@@ -149,6 +149,12 @@ export interface RegistryEntry {
   implementations?: ComponentImplementation[]
   /** Animation support; defaults to entering+exiting when absent. */
   animations?: AnimationCapability
+  /**
+   * Phase 4 (P0-1): event hooks this component can carry, shown as rows in
+   * the inspector's Interaction section and wired to NodeInteractions.
+   * Absent = the component has no wireable events (code-controlled only).
+   */
+  hooks?: ReadonlyArray<{ hook: string; label: string }>
   codegen: {
     /** Exact import line emitted into generated code. */
     import: string
