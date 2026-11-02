@@ -43,6 +43,16 @@
 
 ## ◐ IN PROGRESS — next: Phase 4 (capability gaps — P0 ladder: events → lists runtime → data → auth → forms)
 
+### ✔ 2026-11-02 — Phase 5: regression verification (COMPLETE)
+
+**Acceptance checklist (audit §5) — item by item**
+- [x] Existing projects still open / screens intact / components functional — `tests/phase5-regression.test.ts`: a pre-Phase-2-shaped project (no impls, no listRole, v1 prop habits) generates its full file set, and every node emits EXACTLY its pre-Phase-2 form: view → plain react-native View (the screen-level wrapper is the only SafeAreaView); button → the Pressable composite with variant preset + hitSlop (node style wins per key); image → the real expo-image API (contentFit prop, tint→tintColor); ScrollView fanout; Switch trackColor composition; Divider axis visual; LinearGradient wrapper; BlurView system→default tint mapping; TextInput; ActivityIndicator. Plus the theme files + useTheme wiring, unchanged.
+- [x] New component types work in editor AND simulation — live-verified during Phases 2/3 (canvas placement, array editor, roles, bindings; the sim session rendered the list screen while switching tabs in the tabs group).
+- [x] Tab switching no longer flickers — timed DOM probe (Phase 3): outgoing layer opacity 1.0 at 60/120/180ms, incoming fades 0.23→0.77→0.99, held layer unmounts by 300ms.
+- [x] Popovers stable — probe (Phase 3): one MOUNT per dwell, single initial positioning pass, clean UNMOUNT, no stuck states.
+- [x] No regressions in existing functionality — vitest **76/76** (69 + 7 Phase-5), `tsc --noEmit` clean, and every generated file parses as valid JSX/TS via @babel/parser (two file-level parse suites: phase2 + phase5).
+- Two Phase-5 assertions were corrected against the ACTUAL emission during development (image codegen emits the real expo-image API — contentFit — not the preview's RNW resizeMode mapping; the BlurView fixture now exercises the system→default mapping) — the tests pin real behavior, not guesses.
+
 ### ✔ 2026-11-02 — Phase 3: runtime bug fixes — both flickers, root causes (COMPLETE)
 
 **Bug A — tab-switch flicker in simulation** (`screen-artboard.tsx`)
@@ -149,11 +159,11 @@ Extended the EXISTING Add Element / registry / rendering infrastructure — no s
 ### Phase 4 — Capability gaps (only what the reference matrix proves relevant)
 Filled after the Phase 0 matrix; candidates already visible: flows/interactions wiring, lists runtime, data binding, theme system, custom components. No speculative features.
 
-### Phase 5 — Verification
-- [ ] Existing projects still open; existing screens intact; existing components functional.
-- [ ] New component types work in editor AND simulation.
-- [ ] Tab switching no longer flickers; popovers stable.
-- [ ] No regressions in existing functionality.
+### Phase 5 — Verification ✔ DONE (2026-11-02, see above)
+- [x] Existing projects still open; existing screens intact; existing components functional (pre-Phase-2 fixture + live persistence).
+- [x] New component types work in editor AND simulation.
+- [x] Tab switching no longer flickers; popovers stable (timed probes).
+- [x] No regressions in existing functionality (76/76, tsc clean, generated files parse as JSX).
 
 ---
 
@@ -171,3 +181,4 @@ Filled after the Phase 0 matrix; candidates already visible: flows/interactions 
 | 2026-11-02 | restore after sandbox reset | Working tree re-cloned from origin/main; latent tsc error in tests/paint.test.ts fixed. |
 | 2026-11-02 | Phase 2 | Component insertion: impl-aware registry/codegen/inspector end-to-end; View 3 options; Button 4 implementations; Lists 5 forms + data sources + roles + bindings (see entry above). |
 | 2026-11-02 | Phase 3 | Both flickers fixed at root cause: opaque-under-fade screen swap; open-pencil custom tooltip system replacing the Radix port (see entry above). |
+| 2026-11-02 | Phase 5 | Regression verification: pre-Phase-2 backward-compat emission pinned by tests; generated files parse as JSX; 76/76 (see entry above). |
