@@ -35,9 +35,9 @@
  * aware); screens are not draggable.
  */
 
-import { memo, useCallback, useMemo, useRef } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 
 import { cn } from '@/lib/utils'
 import { useCanvasViewport } from '@/lib/canvas/viewport-store'
@@ -218,10 +218,33 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
     return shown === screen.id ? screen : (s.data.screens.find((x) => x.id === shown) ?? screen)
   })
 
+  /* ── screen-swap hold (Phase 3, Bug A): keep the outgoing screen mounted and
+   * fully opaque beneath the incoming layer for the duration of the fade (see
+   * the content-region comment). lastShownRef is read DURING render, so the
+   * very first frame of a change already paints the old screen beneath — no
+   * intermediate blank frame; a timer unmounts it after the fade has fully
+   * covered it. Rapid double-swaps replace the held layer (the newer old
+   * screen was already covering the older one). */
+  const reducedMotion = useReducedMotion()
+  const [heldScreen, setHeldScreen] = useState<Screen | null>(null)
+  const lastShownRef = useRef<Screen>(shownScreen)
+  const shownChanged = lastShownRef.current.id !== shownScreen.id
+  const beneathScreen: Screen | null = shownChanged ? lastShownRef.current : heldScreen
+  useEffect(() => {
+    if (lastShownRef.current.id === shownScreen.id) return
+    const outgoing = lastShownRef.current
+    lastShownRef.current = shownScreen
+    setHeldScreen(outgoing)
+    // 150ms fade + mount buffer for the incoming tree's first paint; instant
+    // for reduced motion (the incoming layer is opaque from frame one).
+    const holdMs = reducedMotion ? 40 : 200
+    const t = setTimeout(() => setHeldScreen(null), holdMs)
+    return () => clearTimeout(t)
+  }, [shownScreen, reducedMotion])
+
   const simOn = sim.on
   const selectedNodeId = selection?.kind === 'node' && selection.screenId === screen.id ? selection.nodeId : null
   const highlighted = activeScreenId === screen.id || (selection?.kind === 'screen' && selection.screenId === screen.id)
-  const reducedMotion = useReducedMotion()
   /* Theme-aware screen background (Phase 1): solid / token / gradient resolve
    * against the project palette + preview mode for the DOM div behind the
    * RNW tree (the RNW root View carries the same value inside). */
@@ -360,18 +383,36 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
 
           {/* Live RNW tree — root nodes position inside this wrapper. */}
           <div className="relative min-h-0 flex-1" data-screen-content={screen.id}>
-            <AnimatePresence initial={false}>
-              <motion.div
-                key={shownScreen.id}
-                className="absolute inset-0 flex"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: reducedMotion ? 0 : 0.15 }}
-              >
-                <ScreenTreePreview screen={shownScreen} nodes={nodes} platform={platform} />
-              </motion.div>
-            </AnimatePresence>
+            {/*
+             * Screen swap (Phase 3, Bug A root-cause fix): the previous
+             * crossfade animated BOTH layers (old 1→0, new 0→1), so at the
+             * midpoint each was ~50% transparent — the artboard background
+             * bled through BOTH → the reported flash.
+             *
+             * Now: the outgoing screen stays FULLY OPAQUE beneath (z-1) for
+             * the whole transition; only the incoming layer (z-2) fades in on
+             * top. Composite at any t = new·t + old·(1−t) — a true crossfade
+             * look with nothing behind it but the old screen's own opaque
+             * pixels. No AnimatePresence: the held layer is state-driven and
+             * unmounted by a timer AFTER the fade completes (the timer is the
+             * transition's own duration + mount buffer — an animation
+             * lifecycle, not a masking delay).
+             */}
+            {beneathScreen && beneathScreen.id !== shownScreen.id && (
+              <div className="absolute inset-0 flex" style={{ zIndex: 1, pointerEvents: 'none' }}>
+                <ScreenTreePreview screen={beneathScreen} nodes={nodes} platform={platform} />
+              </div>
+            )}
+            <motion.div
+              key={shownScreen.id}
+              className="absolute inset-0 flex"
+              style={{ zIndex: 2 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: reducedMotion ? 0 : 0.15 }}
+            >
+              <ScreenTreePreview screen={shownScreen} nodes={nodes} platform={platform} />
+            </motion.div>
 
             {!simOn && !hasNodes && (
               <div aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center p-3">

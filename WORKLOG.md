@@ -41,7 +41,26 @@
 
 ---
 
-## ◐ IN PROGRESS — next: Phase 3 (runtime bug fixes — flicker, root causes only)
+## ◐ IN PROGRESS — next: Phase 4 (capability gaps — P0 ladder: events → lists runtime → data → auth → forms)
+
+### ✔ 2026-11-02 — Phase 3: runtime bug fixes — both flickers, root causes (COMPLETE)
+
+**Bug A — tab-switch flicker in simulation** (`screen-artboard.tsx`)
+- Root cause confirmed: the `AnimatePresence` crossfade animated BOTH layers (old 1→0, new 0→1) — at the midpoint each was ~50% transparent, so the artboard background bled through BOTH → the flash. (The secondary suspect — `ScreenTreePreview` remount cost — was real but secondary.)
+- Fix: the outgoing screen now stays **fully opaque beneath (z-1)** for the whole transition; only the incoming layer (z-2) fades in on top. Composite at any t = new·t + old·(1−t) — the crossfade look with nothing behind it but the old screen's own opaque pixels. No AnimatePresence anymore: the held layer is state-driven (`lastShownRef` is read during render, so the first frame of a change already paints the old screen beneath — no intermediate blank frame), and a timer unmounts it after the fade has fully covered it (200ms; 40ms for reduced motion). The timer is the transition's own lifecycle — an animation duration, not a masking delay.
+- Live-verified with a timed DOM probe during a real tab switch: old layer opacity stays **1.0** at 60/120/180ms while the incoming layer fades 0.23 → 0.77 → 0.99; held layer unmounts by 300ms. Per-artboard nav history untouched.
+
+**Bug B — hover tooltip flicker** (`toolbar/tip.tsx` + new `toolbar/tooltip.ts`)
+- Root cause: our Radix-Tooltip port carried the Radix popper context across triggers — live probes showed the damage: repeated reposition writes per mount (7 style mutations on one tooltip), rapid mount/unmount cycles during sweeps, and dwell-hovers that stopped mounting at all after a fast sweep. Open Pencil hit the same class of problems and **replaced the primitive tooltip with a custom implementation** (documented in the study §6) — we ported that instead of patching Radix.
+- The port keeps open-pencil's semantics verbatim: open on pointerover (400ms intent delay) + `:focus-visible` only; instant inside the 300ms global skip window (module-level "warmth"); hides on pointerdown/click and pointer-leave; **claim event** (`expoforge:tooltip-claim`) — an opening tooltip closes any other instantly (nested triggers included); trigger wrapper is `display:contents`; content is pointer-events-none, teleported, positioned by `@floating-ui/dom` with `strategy: fixed` + left/top writes (`transform: false` — the mount animation owns transform), middleware offset(4)+flip+shift, 8px padding; motion `animate-in fade-in zoom-in-95` (tw-animate-css), motion-reduce aware.
+- `@floating-ui/dom` added as an explicit dependency (Radix shipped it only transitively). `TipProvider` removed from page.tsx — there are no Radix tooltips left in the builder; the `Tip` API is unchanged, so all six call sites (top bar, toolbar, flyout, variants, style tab) kept working without edits.
+- Live-verified: one MOUNT per dwell with correct labels, two position writes per mount (the initial left+top pass — the content is still at opacity 0), clean UNMOUNT on leave, no stuck states across sweeps. Compare the old system's 7-write churn.
+
+**Also resolved from the Phase 0 audit §2 table**
+- "ScrollView insertion path (palette-only)" — folded into Phase 2 as planned: ScrollView is now insertable from the View tool's variant menu (and stays a registry/flyout entry); lists carry the `contentContainerStyle` gap need (itemSpacing) — ScrollView keeps its documented children-style-their-own-layout policy.
+
+**Verification**
+- vitest **69/69** (no regressions; the two fixes are DOM-level, covered by the live probes above), `tsc --noEmit` clean.
 
 ### ✔ 2026-11-02 — Phase 2: component insertion improvements (COMPLETE)
 
@@ -123,9 +142,9 @@ Extended the EXISTING Add Element / registry / rendering infrastructure — no s
 - [x] Lists — were inaccessible because no list entries existed in the registry (the audit's finding); now: FlatList, SectionList, horizontal FlatList, grid FlatList, ScrollView-based manual lists. Configured: data source (static array editor), item layout (in-flow template + spacing), headers, footers, separators, empty states (roles). Design ONE item, repeat with dynamic data (bindings + real RNW FlatList/SectionList on canvas).
 - [x] Button implementation choice at insertion: Pressable (default) / TouchableOpacity / TouchableHighlight / RN Button — component-specific props, all connected to the existing interaction system (no duplicate engines).
 
-### Phase 3 — Runtime bug fixes (no cosmetic delays)
-- [ ] **Tab-switch flicker in simulation.** Initial hypothesis (to verify): `screen-artboard.tsx` crossfades via `AnimatePresence` — during the 150ms transition BOTH layers are semi-transparent, so the screen background bleeds through (flash); plus full `ScreenTreePreview` remount on key change. Fix the underlying mechanism (fade only the incoming layer over an opaque outgoing one, or restructure the swap); preserve screen state per the navigation model.
-- [ ] **Popover/tooltip flicker on hover.** Investigate enter/leave handling, pointer boundaries, portal positioning, remounting, hover delays. Moving the pointer from trigger INTO its popover must not close it. Apply consistently to tooltips, menus, popovers.
+### Phase 3 — Runtime bug fixes (no cosmetic delays) ✔ DONE (2026-11-02, see above)
+- [x] **Tab-switch flicker in simulation.** Root cause: crossfade alpha-stacking — both layers semi-transparent, background bled through. Fixed by holding the outgoing screen opaque beneath the fading-in layer; verified with a timed DOM probe (old layer stays opacity 1.0 through 60/120/180ms).
+- [x] **Popover/tooltip flicker on hover.** Root cause: the Radix-Tooltip port's shared popper context (reposition churn, stuck open state). Replaced with open-pencil's custom tooltip system (claim event, global warmth, display:contents trigger, floating-ui fixed/transform-less positioning) — the study's reference solution.
 
 ### Phase 4 — Capability gaps (only what the reference matrix proves relevant)
 Filled after the Phase 0 matrix; candidates already visible: flows/interactions wiring, lists runtime, data binding, theme system, custom components. No speculative features.
@@ -151,3 +170,4 @@ Filled after the Phase 0 matrix; candidates already visible: flows/interactions 
 | 2026-11-02 | Phase 1 | Open Pencil visual alignment + canvas selection features + gradient color picker + theme variables (see entry above). |
 | 2026-11-02 | restore after sandbox reset | Working tree re-cloned from origin/main; latent tsc error in tests/paint.test.ts fixed. |
 | 2026-11-02 | Phase 2 | Component insertion: impl-aware registry/codegen/inspector end-to-end; View 3 options; Button 4 implementations; Lists 5 forms + data sources + roles + bindings (see entry above). |
+| 2026-11-02 | Phase 3 | Both flickers fixed at root cause: opaque-under-fade screen swap; open-pencil custom tooltip system replacing the Radix port (see entry above). |

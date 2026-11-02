@@ -1,90 +1,196 @@
 'use client'
 /*
- * One-line tooltip, ported from open-pencil's Tip (src/components/ui/overlay/Tip.vue)
- * — styling from theme/overlay.ts `tooltipSurface`, motion per open-pencil §6.
+ * Tip — one-line tooltip, ported from open-pencil's Tip.vue (study §6).
+ * Phase 3, Bug B root-cause fix: this is now the CUSTOM implementation
+ * (per-instance lifecycle + the shared engine in ./tooltip.ts), replacing the
+ * Radix-Tooltip port whose popper context caused the reported flicker.
  *
- * Phase-1 alignment with open-pencil's timing model:
- *   - open delay 400ms (TOOLTIP_OPEN_DELAY_MS), skip window 300ms
- *     (TOOLTIP_SKIP_DELAY_MS): after any tooltip closes, a different tooltip
- *     opened within 300ms shows instantly — moving along a toolbar never
- *     waits twice. Radix implements this skip inside a single Provider, so the
- *     provider is hoisted to the app root (TipProvider, mounted once in
- *     page.tsx) instead of one per Tip — per-instance providers would isolate
- *     the skip state and re-apply the 400ms delay on every new trigger.
- *   - the content itself is pointer-events-none (Radix default for tooltips)
- *     and hides on pointerdown, matching open-pencil's flicker-free behavior.
- * Reduced motion (dual gate) renders it instantly.
+ * Open-pencil semantics kept verbatim:
+ *   - open on pointerover (400ms intent delay) and keyboard :focus-visible
+ *     only; instant inside the 300ms global skip window;
+ *   - hides on pointerdown/click and on pointer-leave (claim event closes any
+ *     other open tooltip instantly — nested triggers included);
+ *   - trigger wrapper is display:contents (no layout/hover-boundary changes);
+ *   - content: pointer-events-none, teleported to body, `strategy: fixed,
+ *     transform: false` positioning (left/top, so the mount animation owns
+ *     transform), middleware offset(4) + flip + shift with 8px padding;
+ *   - motion: animate-in fade-in zoom-in-95, ~150ms, motion-reduce: none.
  */
 
-import * as TooltipPrimitive from '@radix-ui/react-tooltip'
-import { motion } from 'framer-motion'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 
 import { tooltipSurface } from '@/app/theme/overlay'
 import { cn } from '@/lib/utils'
-import { useReducedMotionPref } from './use-reduced-motion'
+import {
+  effectiveOpenDelay,
+  nextTooltipClaim,
+  noteTooltipClosed,
+  TOOLTIP_CLAIM_EVENT,
+  TOOLTIP_OPEN_DELAY_MS
+} from './tooltip'
 
-/** open-pencil TOOLTIP_OPEN_DELAY_MS. */
-export const TOOLTIP_OPEN_DELAY_MS = 400
-/** open-pencil TOOLTIP_SKIP_DELAY_MS — global "warmth" window across triggers. */
-export const TOOLTIP_SKIP_DELAY_MS = 300
-
-/**
- * Mount ONCE at the app root: owns the shared skip-delay state for every
- * <Tip> below it (open-pencil's global warmth state).
- */
-export function TipProvider({ children }: { children: ReactNode }) {
-  return (
-    <TooltipPrimitive.Provider delayDuration={TOOLTIP_OPEN_DELAY_MS} skipDelayDuration={TOOLTIP_SKIP_DELAY_MS}>
-      {children}
-    </TooltipPrimitive.Provider>
-  )
-}
+export { TOOLTIP_OPEN_DELAY_MS, TOOLTIP_SKIP_DELAY_MS } from './tooltip'
 
 export interface TipProps {
   label: string
   side?: 'top' | 'bottom' | 'left' | 'right'
-  /** Hover delay in ms (defaults to the provider's 400ms). */
+  /** Hover delay in ms (defaults to 400). Instant inside the skip window. */
   delayDuration?: number
   children: ReactNode
   className?: string
 }
 
+interface ClaimEvent extends Event {
+  detail?: { claimId: number }
+}
+
 export function Tip({
   label,
   side = 'top',
-  delayDuration,
+  delayDuration = TOOLTIP_OPEN_DELAY_MS,
   children,
   className
 }: TipProps) {
-  const reduced = useReducedMotionPref()
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLSpanElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const openTimer = useRef<number | null>(null)
+  const claimId = useRef<number>(0)
+
+  const clearOpenTimer = (): void => {
+    if (openTimer.current !== null) {
+      window.clearTimeout(openTimer.current)
+      openTimer.current = null
+    }
+  }
+
+  const close = (fromClaim = false): void => {
+    clearOpenTimer()
+    if (!fromClaim) {
+      // Another tooltip just claimed the stage: the close is the claimer's
+      // doing — it already recorded nothing; only real closes bump the
+      // "warmth" clock so the NEXT trigger can open instantly.
+      noteTooltipClosed()
+    }
+    setOpen(false)
+  }
+
+  const scheduleOpen = (): void => {
+    clearOpenTimer()
+    // Claim the stage: every other open tooltip closes instantly.
+    claimId.current = nextTooltipClaim()
+    window.dispatchEvent(new CustomEvent(TOOLTIP_CLAIM_EVENT, { detail: { claimId: claimId.current } }))
+    const delay = effectiveOpenDelay(delayDuration)
+    if (delay <= 0) {
+      setOpen(true)
+      return
+    }
+    openTimer.current = window.setTimeout(() => {
+      openTimer.current = null
+      setOpen(true)
+    }, delay)
+  }
+
+  /* Another tooltip opening while we are open → close instantly (its claim). */
+  useEffect(() => {
+    if (!open) return
+    const onClaim = (e: Event): void => {
+      const claim = (e as ClaimEvent).detail
+      if (claim && claim.claimId !== claimId.current) {
+        clearOpenTimer()
+        setOpen(false)
+      }
+    }
+    window.addEventListener(TOOLTIP_CLAIM_EVENT, onClaim)
+    return () => window.removeEventListener(TOOLTIP_CLAIM_EVENT, onClaim)
+  }, [open])
+
+  /* Positioning: fixed strategy, no transform (left/top), recompute while
+   * open on resize/scroll (viewport padding 8, offset 4, flip + shift). */
+  useEffect(() => {
+    if (!open) return
+    const triggerEl = triggerRef.current
+    const contentEl = contentRef.current
+    if (!triggerEl || !contentEl) return
+
+    let raf = 0
+    const position = (): void => {
+      raf = 0
+      computePosition(triggerEl, contentEl, {
+        strategy: 'fixed',
+        placement: side,
+        middleware: [offset(4), flip(), shift({ padding: 8 })]
+      }).then(({ x, y }) => {
+        contentEl.style.left = `${Math.round(x)}px`
+        contentEl.style.top = `${Math.round(y)}px`
+      })
+    }
+    const schedulePosition = (): void => {
+      if (raf === 0) raf = window.requestAnimationFrame(position)
+    }
+    schedulePosition()
+    window.addEventListener('resize', schedulePosition)
+    window.addEventListener('scroll', schedulePosition, true)
+    return () => {
+      if (raf !== 0) window.cancelAnimationFrame(raf)
+      window.removeEventListener('resize', schedulePosition)
+      window.removeEventListener('scroll', schedulePosition, true)
+    }
+  }, [open, side])
+
+  /* Clear pending timers on unmount. */
+  useEffect(() => clearOpenTimer, [])
+
+  const isWithinTrigger = (node: EventTarget | null): boolean => {
+    const el = triggerRef.current
+    return el !== null && node !== null && node instanceof Node && el.contains(node)
+  }
 
   return (
-    <TooltipPrimitive.Root delayDuration={delayDuration}>
-      <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
-      <TooltipPrimitive.Portal>
-        <TooltipPrimitive.Content
-          side={side}
-          sideOffset={6}
-          collisionPadding={8}
-          className="z-[100]"
-        >
-          {/* Animated inner element: the positioned Radix wrapper keeps its
-              floating-ui transform untouched (same pattern as the flyout menus). */}
-          <motion.span
-            className={cn(
-              'max-w-80 px-2 py-1 text-[11px] break-words whitespace-nowrap select-none',
-              tooltipSurface,
-              className
-            )}
-            initial={reduced ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: reduced ? 0 : 0.12, ease: 'easeOut' }}
+    <span
+      ref={triggerRef}
+      style={{ display: 'contents' }}
+      onPointerOver={(e) => {
+        // Entering the trigger subtree (not an internal move): schedule.
+        if (!isWithinTrigger(e.relatedTarget)) scheduleOpen()
+      }}
+      onPointerOut={(e) => {
+        // Actually leaving the subtree (not an internal move).
+        if (!isWithinTrigger(e.relatedTarget)) close()
+      }}
+      onFocus={(e) => {
+        // Keyboard focus only (:focus-visible semantics): a focus event that
+        // follows a pointer interaction is not keyboard focus.
+        if (e.target instanceof HTMLElement && e.target.matches(':focus-visible')) scheduleOpen()
+      }}
+      onBlur={() => close()}
+      onPointerDown={() => close()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') close()
+      }}
+    >
+      {children}
+      {open &&
+        createPortal(
+          <div
+            ref={contentRef}
+            role="tooltip"
+            className={cn('z-[100] pointer-events-none fixed left-0 top-0', className)}
           >
-            {label}
-          </motion.span>
-        </TooltipPrimitive.Content>
-      </TooltipPrimitive.Portal>
-    </TooltipPrimitive.Root>
+            <span
+              className={cn(
+                'block max-w-80 px-2 py-1 text-[11px] break-words whitespace-nowrap select-none',
+                tooltipSurface,
+                'animate-in fade-in zoom-in-95 duration-150 motion-reduce:animate-none'
+              )}
+            >
+              {label}
+            </span>
+          </div>,
+          document.body
+        )}
+    </span>
   )
 }
