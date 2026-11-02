@@ -18,14 +18,18 @@
  *   skipped entirely (no wrapper, no import) when no edges are enabled.
  * - Wired interactions (Phase 4 P0-1) add `useRouter` from expo-router + a
  *   component-scope `const router = useRouter()` — exactly when some node in
- *   the tree emitted a handler (ctx.nav.router), never otherwise.
- * - No react import in v1 (no state hooks yet — the flow/state module owns those).
+ *   the tree emitted a handler (ctx.usage.router), never otherwise.
+ * - Screen state (Phase 4 slice 2): entries referenced by {state.x} bindings
+ *   or set-state actions emit `const [name, setName] = useState(initial)`
+ *   (usage-gated, like theme tokens — unused declarations emit nothing).
+ * - No React import beyond useState when state is used (nothing else yet).
  * - NEVER StyleSheet — all styles are inline literals.
  */
 
 import { buildScreenTree } from '@/lib/project/store'
 import type { ProjectData, Screen } from '@/lib/project/types'
 import { isGradientPaint, isTokenPaint } from '@/lib/paint'
+import { setterName } from '@/lib/state/screen-state'
 
 import { identifierFromKebab } from './format'
 import { ImportCollector } from './imports'
@@ -89,12 +93,20 @@ export function renderScreenFile(data: ProjectData, screen: Screen): string {
    * follows the plain-TS theme pattern (constants/theme.ts, no NativeWind). */
   const usesTokens = ctx.paint.tokens.size > 0
   if (usesTokens) imports.addNamed('@/hooks/useTheme', 'useTheme')
-  if (ctx.nav.router) imports.addNamed('expo-router', 'useRouter')
+  if (ctx.usage.router) imports.addNamed('expo-router', 'useRouter')
+  /* Screen state (Phase 4 slice 2): usage-gated useState declarations — only
+   * entries actually referenced by a binding or a set-state handler. */
+  const usedState = (screen.state ?? []).filter((e) => ctx.usage.state.has(e.name))
+  if (usedState.length > 0) imports.addNamed('react', 'useState')
   const importLines = imports.render()
   lines.push(...importLines)
   lines.push('')
   lines.push(`export default function ${componentName}() {`)
-  if (ctx.nav.router) lines.push('  const router = useRouter();')
+  if (ctx.usage.router) lines.push('  const router = useRouter();')
+  for (const e of usedState) {
+    const initial = typeof e.initial === 'string' ? `'${e.initial.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'` : String(e.initial)
+    lines.push(`  const [${e.name}, ${setterName(e.name)}] = useState(${initial});`)
+  }
   if (usesTokens) lines.push('  const { colors } = useTheme();')
   lines.push('  return (')
   lines.push(...renderElement(root, 4))

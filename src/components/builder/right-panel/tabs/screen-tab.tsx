@@ -15,7 +15,8 @@ import { floatingSurface } from '@/app/theme/overlay'
 import { panelFieldBase } from '@/app/theme/panel/field/base'
 import { DEVICE_PRESETS, deviceById, type PlatformId } from '@/components/builder/screens/device-presets'
 import { slugify, useProjectStore } from '@/lib/project/store'
-import type { Screen } from '@/lib/project/types'
+import type { Screen, ScreenStateEntry } from '@/lib/project/types'
+import { stateNameOk } from '@/lib/state/screen-state'
 import { cn } from '@/lib/utils'
 import { CollapsibleSection } from '../collapsible-section'
 import { SectionFields } from '../field-grid'
@@ -96,6 +97,226 @@ function DeviceSelect({ screen }: { screen: Screen }) {
 export interface ScreenTabProps {
   screen: Screen
   className?: string
+}
+
+/* ── Screen state (Phase 4 slice 2) ───────────────────────────────────────── */
+
+const STATE_TYPES: { value: ScreenStateEntry['type']; label: string }[] = [
+  { value: 'string', label: 'Text' },
+  { value: 'boolean', label: 'True/false' },
+  { value: 'number', label: 'Number' }
+]
+
+/** Default initial per type — what a freshly added entry starts as. */
+function defaultInitial(type: ScreenStateEntry['type']): string | number | boolean {
+  if (type === 'boolean') return false
+  if (type === 'number') return 0
+  return ''
+}
+
+/** One state entry row: name (identifier, commits on blur/Enter), type,
+ *  initial value (typed control), delete. */
+function StateEntryRow({
+  entry,
+  index,
+  siblings,
+  onPatch,
+  onDelete
+}: {
+  entry: ScreenStateEntry
+  index: number
+  siblings: ScreenStateEntry[]
+  onPatch: (index: number, patch: Partial<ScreenStateEntry>) => void
+  onDelete: (index: number) => void
+}) {
+  const [nameDraft, setNameDraft] = useState(entry.name)
+  const [nameFocused, setNameFocused] = useState(false)
+  const nameTaken = (candidate: string) => siblings.some((e, i) => i !== index && e.name === candidate)
+  const nameInvalid = nameDraft !== entry.name && (!stateNameOk(nameDraft) || nameTaken(nameDraft))
+
+  function commitName() {
+    setNameFocused(false)
+    const trimmed = nameDraft.trim()
+    if (trimmed === entry.name) return
+    if (stateNameOk(trimmed) && !nameTaken(trimmed)) onPatch(index, { name: trimmed })
+    else setNameDraft(entry.name) // invalid/duplicate → revert, no surprise
+  }
+
+  const labelId = useId()
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-md border border-border/60 bg-panel-field/40 p-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <input
+          aria-labelledby={labelId}
+          aria-label="State name"
+          type="text"
+          className={cn(
+            panelFieldBase,
+            'h-6 min-w-0 flex-1 px-2 font-mono text-[11px] text-surface',
+            nameInvalid && 'border-red-500/70'
+          )}
+          value={nameDraft}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="name"
+          onChange={(event) => setNameDraft(event.target.value)}
+          onFocus={() => setNameFocused(true)}
+          onBlur={commitName}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              event.currentTarget.blur()
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              setNameDraft(entry.name)
+              event.currentTarget.blur()
+            }
+          }}
+        />
+        <SelectPrimitive.Root
+          value={entry.type}
+          onValueChange={(t) => {
+            const type = t as ScreenStateEntry['type']
+            onPatch(index, { type, initial: defaultInitial(type) })
+          }}
+        >
+          <SelectPrimitive.Trigger
+            aria-label="State type"
+            className={cn(panelFieldBase, 'h-6 w-24 shrink-0 px-1.5 text-[11px] text-surface')}
+          >
+            <span className='min-w-0 flex-1 truncate text-left'>
+              {STATE_TYPES.find((t) => t.value === entry.type)?.label ?? entry.type}
+            </span>
+            <SelectPrimitive.Icon asChild>
+              <SlotIcon slot="inspector.chevron-down" aria-hidden="true" className="ml-0.5 size-3 shrink-0 text-muted" />
+            </SelectPrimitive.Icon>
+          </SelectPrimitive.Trigger>
+          <SelectPrimitive.Portal>
+            <SelectPrimitive.Content position="popper" sideOffset={4} className={selectContentClass}>
+              <SelectPrimitive.Viewport className="p-0.5">
+                {STATE_TYPES.map((t) => (
+                  <SelectPrimitive.Item key={t.value} value={t.value} className={selectItemClass}>
+                    <span className={selectIndicatorClass}>
+                      <SelectPrimitive.ItemIndicator>
+                        <SlotIcon slot="inspector.check" aria-hidden="true" className="size-3" />
+                      </SelectPrimitive.ItemIndicator>
+                    </span>
+                    <SelectPrimitive.ItemText>{t.label}</SelectPrimitive.ItemText>
+                  </SelectPrimitive.Item>
+                ))}
+              </SelectPrimitive.Viewport>
+            </SelectPrimitive.Content>
+          </SelectPrimitive.Portal>
+        </SelectPrimitive.Root>
+        <button
+          type="button"
+          aria-label={`Delete state ${entry.name}`}
+          title="Delete state"
+          onClick={() => onDelete(index)}
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-surface"
+        >
+          <SlotIcon slot="tree.delete" aria-hidden="true" className="size-3.5" />
+        </button>
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <label id={labelId} className="w-16 shrink-0 truncate text-[11px] leading-none text-muted">
+          Initial
+        </label>
+        {entry.type === 'boolean' ? (
+          <SelectPrimitive.Root
+            value={String(entry.initial)}
+            onValueChange={(v) => onPatch(index, { initial: v === 'true' })}
+          >
+            <SelectPrimitive.Trigger
+              aria-label="Initial value"
+              className={cn(panelFieldBase, 'h-6 min-w-0 flex-1 px-2 text-[11px] text-surface')}
+            >
+              <span className="min-w-0 flex-1 truncate text-left">{String(entry.initial)}</span>
+              <SelectPrimitive.Icon asChild>
+                <SlotIcon slot="inspector.chevron-down" aria-hidden="true" className="ml-0.5 size-3 shrink-0 text-muted" />
+              </SelectPrimitive.Icon>
+            </SelectPrimitive.Trigger>
+            <SelectPrimitive.Portal>
+              <SelectPrimitive.Content position="popper" sideOffset={4} className={selectContentClass}>
+                <SelectPrimitive.Viewport className="p-0.5">
+                  {['false', 'true'].map((v) => (
+                    <SelectPrimitive.Item key={v} value={v} className={selectItemClass}>
+                      <span className={selectIndicatorClass}>
+                        <SelectPrimitive.ItemIndicator>
+                          <SlotIcon slot="inspector.check" aria-hidden="true" className="size-3" />
+                        </SelectPrimitive.ItemIndicator>
+                      </span>
+                      <SelectPrimitive.ItemText>{v}</SelectPrimitive.ItemText>
+                    </SelectPrimitive.Item>
+                  ))}
+                </SelectPrimitive.Viewport>
+              </SelectPrimitive.Content>
+            </SelectPrimitive.Portal>
+          </SelectPrimitive.Root>
+        ) : (
+          <input
+            aria-label="Initial value"
+            type={entry.type === 'number' ? 'number' : 'text'}
+            className={cn(panelFieldBase, 'h-6 min-w-0 flex-1 px-2 text-[11px] text-surface')}
+            value={String(entry.initial)}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => {
+              const raw = event.target.value
+              onPatch(index, { initial: entry.type === 'number' ? Number(raw) : raw })
+            }}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The Screen tab's State section — declares what `{state.x}` can bind to. */
+function StateSection({ screen }: { screen: Screen }) {
+  const setScreenState = useProjectStore((s) => s.setScreenState)
+  const entries = screen.state ?? []
+
+  const commit = (next: ScreenStateEntry[]) => setScreenState(screen.id, next)
+  const patch = (index: number, p: Partial<ScreenStateEntry>) =>
+    commit(entries.map((e, i) => (i === index ? { ...e, ...p } : e)))
+  const remove = (index: number) => commit(entries.filter((_, i) => i !== index))
+  const add = () => {
+    let n = entries.length + 1
+    let name = `value${n}`
+    while (entries.some((e) => e.name === name)) name = `value${++n}`
+    commit([...entries, { id: `state-${screen.id}-${name}`, name, type: 'boolean', initial: false }])
+  }
+
+  return (
+    <CollapsibleSection id="screen-state" title="State">
+      <div className="flex min-w-0 flex-col gap-2">
+        {entries.length === 0 ? (
+          <p className="text-[10px] leading-relaxed text-muted">
+            No state on this screen. Add an entry, then bind text as {'{state.name}'} and set it from a button.
+          </p>
+        ) : (
+          entries.map((entry, i) => (
+            <StateEntryRow
+              key={entry.id}
+              entry={entry}
+              index={i}
+              siblings={entries}
+              onPatch={patch}
+              onDelete={remove}
+            />
+          ))
+        )}
+        <button
+          type="button"
+          onClick={add}
+          className="h-7 w-full rounded-md border border-dashed border-border text-[11px] text-muted hover:border-primary/60 hover:text-surface"
+        >
+          Add state
+        </button>
+      </div>
+    </CollapsibleSection>
+  )
 }
 
 export function ScreenTab({ screen, className }: ScreenTabProps) {
@@ -259,6 +480,8 @@ export function ScreenTab({ screen, className }: ScreenTabProps) {
           onScrubEnd={endGesture}
         />
       </CollapsibleSection>
+
+      <StateSection screen={screen} />
       <div className="h-6 shrink-0" aria-hidden="true" />
     </div>
   )

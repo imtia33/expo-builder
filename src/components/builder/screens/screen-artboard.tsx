@@ -336,18 +336,22 @@ export const ScreenArtboard = memo(function ScreenArtboard({ screen, chromeTarge
     if (useProjectStore.getState().sim.on) simBack(screen.id)
   }, [screen.id, simBack])
 
-  /* Wired interactions (Phase 4, P0-1): the same sim runtime, handed to the
-   * RNW tree via context. Only in Sim mode — the edit pane swallows pointer
-   * events while editing, and inert buttons there are the honest state. */
+  /* Wired interactions (Phase 4): the sim runtime — nav + state writes —
+   * handed to the RNW tree via context. Only in Sim mode: the edit pane
+   * swallows pointer events while editing, and inert buttons there are the
+   * honest state. */
+  const simSetState = useProjectStore((s) => s.simSetState)
   const nav = useMemo<PreviewNav | null>(
     () =>
       simOn
         ? {
             navigate: (target: string, mode: 'push' | 'replace') => simNavigate(screen.id, target, mode),
-            back: () => simBack(screen.id)
+            back: () => simBack(screen.id),
+            setState: (targetScreenId: string, name: string, value: boolean | string | number | 'toggle') =>
+              simSetState(targetScreenId, name, value)
           }
         : null,
-    [simOn, screen.id, simNavigate, simBack]
+    [simOn, screen.id, simNavigate, simBack, simSetState]
   )
 
   const frameShadow = useMemo(() => {

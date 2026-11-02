@@ -101,13 +101,17 @@ describe('resolveInteraction', () => {
     const calls: string[] = []
     const nav: PreviewNav = {
       navigate: (target, mode) => calls.push(`navigate:${target}:${mode}`),
-      back: () => calls.push('back')
+      back: () => calls.push('back'),
+      setState: (screenId, name, value) => calls.push(`setState:${screenId}:${name}:${String(value)}`)
     }
     const data = { screens: SCREENS }
-    fireInteraction('onPress', { interactions: { onPress: { kind: 'navigate', screenId: 'detail', mode: 'push' } } }, data, nav)
-    fireInteraction('onPress', { interactions: { onPress: { kind: 'navigate', screenId: 'gone', mode: 'push' } } }, data, nav)
-    fireInteraction('onPress', { interactions: { onPress: { kind: 'back' } } }, data, nav)
-    fireInteraction('onPress', {}, data, nav)
+    const node = (ia?: Record<string, InteractionAction>) => ({ screenId: 'home', interactions: ia })
+    fireInteraction('onPress', node({ onPress: { kind: 'navigate', screenId: 'detail', mode: 'push' } }), data, nav)
+    fireInteraction('onPress', node({ onPress: { kind: 'navigate', screenId: 'gone', mode: 'push' } }), data, nav)
+    fireInteraction('onPress', node({ onPress: { kind: 'back' } }), data, nav)
+    fireInteraction('onPress', node({ onPress: { kind: 'set-state', name: 'busy', value: 'toggle' } }), data, nav)
+    fireInteraction('onPress', node({ onPress: { kind: 'set-state', name: 'undeclared', value: true } }), data, nav)
+    fireInteraction('onPress', node(), data, nav)
     expect(calls).toEqual(['navigate:detail:push', 'back'])
   })
 })

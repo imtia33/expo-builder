@@ -172,6 +172,23 @@ export type InteractionAction =
   | { kind: 'navigate'; screenId: string; mode: 'push' | 'replace' }
   /** Pop the current stack — `router.back()`. */
   | { kind: 'back' }
+  /**
+   * Phase 4 slice 2: set one state entry of the NODE'S OWN screen
+   * (useState scope — cross-screen state is app-store territory, later).
+   * `value: 'toggle'` flips a boolean entry (emits `setX(!x)`). Resolves
+   * unwired when the entry no longer exists or the value type mismatches.
+   */
+  | { kind: 'set-state'; name: string; value: boolean | string | number | 'toggle' }
+
+/** One screen-scoped state entry (Phase 4 slice 2) — generated as useState. */
+export interface ScreenStateEntry {
+  id: string
+  /** Identifier used as the useState variable (validated; never collides
+   *  with builder-emitted identifiers — see lib/state/screen-state). */
+  name: string
+  type: 'boolean' | 'string' | 'number'
+  initial: boolean | string | number
+}
 
 /** Wired hooks on a node: hook name → action. One action per hook in v1.
  *  The single-step degenerate case of the docs/05 flow model — multi-step
@@ -210,6 +227,13 @@ export interface Screen {
    *  ({ token: 'primary' }), or a gradient. Emitted on the root View
    *  (gradients wrap it in LinearGradient; see codegen/screens.ts). */
   background: string | { token: string } | { type: 'linear-gradient'; angle: number; stops: { color: string; position: number }[] } | { type: 'radial-gradient'; stops: { color: string; position: number }[] }
+  /**
+   * Phase 4 slice 2: screen-scoped state entries (generated as useState,
+   * usage-gated: only entries referenced by a {state.x} binding or a
+   * set-state action are emitted). Text/button-title values may bind
+   * `{state.<name>}` — the same resolver serves preview and codegen.
+   */
+  state?: ScreenStateEntry[]
   /**
    * Whole-file code override: when set, codegen emits this source VERBATIM for
    * the screen's file and visual editing of its nodes is disabled (the tree
@@ -312,6 +336,13 @@ export interface SimState {
    * is a stack of screen ids; the last entry is the screen the artboard shows.
    */
   history: Record<string, string[]>
+  /**
+   * Phase 4 slice 2: live state VALUES per screen (keyed by screen id, then
+   * state entry name). Set by set-state interactions during sim; reset when
+   * sim toggles (ephemeral, like history — never committed/undoable). Absent
+   * entries fall back to the declared initial values.
+   */
+  values?: Record<string, Record<string, boolean | string | number>>
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

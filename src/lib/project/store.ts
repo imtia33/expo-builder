@@ -17,6 +17,7 @@ import { persist } from 'zustand/middleware'
 import { DEVICE_PRESETS, deviceById, type PlatformId } from '@/components/builder/screens/device-presets'
 import { getEntry } from '@/expoforge/registry'
 import { isListEntryType } from '@/lib/lists/bindings'
+import { resolveStateValues, stateEntry, normalizeStateEntries } from '@/lib/state/screen-state'
 import { DEFAULT_THEME_COLORS } from '@/lib/paint'
 import { HistoryManager, installHistoryWatchdog } from './history'
 import type {
@@ -34,6 +35,7 @@ import type {
   ProjectNode,
   Screen,
   ScreenGroup,
+  ScreenStateEntry,
   Selection,
   SimState,
   StackNavConfig,
@@ -482,6 +484,10 @@ interface ProjectState {
   /** Phase 4 (P0-1): wire (or unwire with null) one event hook on a node to
    *  an interaction action. One undo entry per wiring change. */
   setNodeInteraction: (id: string, hook: string, action: InteractionAction | null) => void
+  /** Phase 4 slice 2: replace one screen's state entries (Screen tab editor).
+   *  One undo entry per edit; entries are normalized (identifier names,
+   *  unique, initials coerced to their declared type). */
+  setScreenState: (screenId: string, entries: ScreenStateEntry[]) => void
   /** Patch entering/exiting animation specs (undefined value removes the phase). */
   patchNodeAnimations: (id: string, patch: Partial<NodeAnimations>) => void
   /** Replace preserved verbatim attribute source (code-controlled props). */
@@ -501,6 +507,10 @@ interface ProjectState {
   setSim: (on: boolean) => void
   simNavigate: (artboardScreenId: string, targetScreenId: string, mode: 'push' | 'replace') => void
   simBack: (artboardScreenId: string) => void
+  /** Phase 4 slice 2: write one live state value during sim (never undoable —
+   *  ephemeral runtime state, like sim history). 'toggle' flips the current
+   *  value (initial when never set). */
+  simSetState: (screenId: string, name: string, value: boolean | string | number | 'toggle') => void
 }
 
 const EMPTY_DATA: ProjectData = {
@@ -1210,6 +1220,22 @@ export const useProjectStore = create<ProjectState>()(
             }
           }),
 
+        /* ── screen state (Phase 4 slice 2) ─────────────────────────────── */
+        setScreenState: (screenId, entries) =>
+          commit((st) => {
+            const screen = st.data.screens.find((s) => s.id === screenId)
+            if (!screen) return {}
+            const normalized = normalizeStateEntries(entries)
+            const screens = st.data.screens.map((s) =>
+              s.id === screenId
+                ? normalized.length > 0
+                  ? { ...s, state: normalized }
+                  : { ...s, state: undefined }
+                : s
+            )
+            return { data: { ...st.data, screens } }
+          }),
+
         patchNodeAnimations: (id, patch) =>
           commit((st) => {
             const node = st.data.nodes[id]
@@ -1327,6 +1353,29 @@ export const useProjectStore = create<ProjectState>()(
           if (stack.length <= 1) return
           set({
             sim: { ...s.sim, history: { ...s.sim.history, [artboardScreenId]: stack.slice(0, -1) } },
+            revision: s.revision + 1
+          })
+        },
+
+        simSetState: (screenId, name, value) => {
+          const s = get()
+          if (!s.sim.on) return
+          // Only DECLARED entries are writable — resolveStateValues semantics.
+          const screen = s.data.screens.find((x) => x.id === screenId)
+          const entry = stateEntry(screen, name)
+          if (!entry) return
+          if (value === 'toggle' && entry.type !== 'boolean') return
+          const current = { ...resolveStateValues(screen, s.sim.values?.[screenId]) }
+          if (value === 'toggle') {
+            current[name] = !current[name]
+          } else {
+            current[name] = value
+          }
+          set({
+            sim: {
+              ...s.sim,
+              values: { ...(s.sim.values ?? {}), [screenId]: current }
+            },
             revision: s.revision + 1
           })
         }

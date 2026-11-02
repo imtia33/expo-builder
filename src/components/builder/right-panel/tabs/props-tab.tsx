@@ -207,12 +207,19 @@ function interactionSection(
   groups: ScreenGroup[]
 ): PanelSection | null {
   if (!entry.hooks || entry.hooks.length === 0) return null
+  // The node's own screen — set-state actions are scoped to it (useState).
+  const ownScreen = screens.find((s) => s.id === node.screenId)
+  const ownState = ownScreen?.state ?? []
   const entries: PanelSection['entries'] = []
   for (const { hook, label } of entry.hooks) {
     // The stored value may be dangling (target screen deleted): show the
     // kind but an EMPTY screen select — re-picking completes the wiring.
     const stored = node.interactions?.[hook]
-    const kind = stored ? (resolveInteraction(stored, screens) ? stored.kind : (stored as InteractionAction).kind) : ''
+    const kind = stored
+      ? resolveInteraction(stored, screens, node.screenId)
+        ? stored.kind
+        : stored.kind // dangling still shows its kind (screen/entry select re-picks)
+      : ''
     entries.push({
       kind: 'select',
       id: `${IA_PREFIX}${hook}`,
@@ -222,7 +229,8 @@ function interactionSection(
       options: [
         { value: IA_NONE, label: 'None' },
         { value: 'navigate', label: 'Navigate to screen' },
-        { value: 'back', label: 'Go back' }
+        { value: 'back', label: 'Go back' },
+        { value: 'set-state', label: 'Set state' }
       ]
     })
     if (kind === 'navigate') {
@@ -250,6 +258,57 @@ function interactionSection(
           { value: 'replace', label: 'Replace' }
         ]
       })
+    }
+    if (kind === 'set-state') {
+      const current = stored?.kind === 'set-state' ? stored : null
+      const targetEntry = current ? ownState.find((e) => e.name === current.name) : undefined
+      if (ownState.length === 0) {
+        entries.push({
+          kind: 'label',
+          id: `${IA_PREFIX}${hook}@nostate`,
+          label: 'No state on this screen — add entries in the Screen tab.'
+        })
+      } else {
+        entries.push({
+          kind: 'select',
+          id: `${IA_PREFIX}${hook}@state`,
+          label: 'State',
+          value: targetEntry ? current!.name : undefined,
+          defaultValue: undefined,
+          options: ownState.map((e) => ({ value: e.name, label: `${e.name} (${e.type})` }))
+        })
+        if (targetEntry) {
+          if (targetEntry.type === 'boolean') {
+            entries.push({
+              kind: 'select',
+              id: `${IA_PREFIX}${hook}@value`,
+              label: 'Value',
+              value: String(current!.value),
+              defaultValue: 'toggle',
+              options: [
+                { value: 'toggle', label: 'Toggle' },
+                { value: 'true', label: 'True' },
+                { value: 'false', label: 'False' }
+              ]
+            })
+          } else if (targetEntry.type === 'number') {
+            entries.push({
+              kind: 'number',
+              id: `${IA_PREFIX}${hook}@value`,
+              label: 'Value',
+              value: typeof current!.value === 'number' ? current!.value : typeof targetEntry.initial === 'number' ? targetEntry.initial : 0
+            })
+          } else {
+            entries.push({
+              kind: 'text',
+              id: `${IA_PREFIX}${hook}@value`,
+              label: 'Value',
+              value: typeof current!.value === 'string' && current!.value !== 'toggle' ? current!.value : undefined,
+              placeholder: String(targetEntry.initial)
+            })
+          }
+        }
+      }
     }
   }
   return { id: 'props-interaction', title: 'Interaction', entries }
@@ -292,7 +351,14 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
       if (ia.part === 'action') {
         if (value === IA_NONE) setNodeInteraction(node.id, ia.hook, null)
         else if (value === 'back') setNodeInteraction(node.id, ia.hook, { kind: 'back' })
-        else if (value === 'navigate')
+        else if (value === 'set-state') {
+          const prev = stored?.kind === 'set-state' ? stored : null
+          setNodeInteraction(node.id, ia.hook, {
+            kind: 'set-state',
+            name: prev?.name ?? '',
+            value: prev?.value ?? 'toggle'
+          })
+        } else if (value === 'navigate')
           setNodeInteraction(node.id, ia.hook, {
             kind: 'navigate',
             screenId: stored?.kind === 'navigate' ? stored.screenId : '',
@@ -309,6 +375,34 @@ export function PropsTab({ node, entry, className }: PropsTabProps) {
       if (ia.part === 'mode' && (value === 'push' || value === 'replace')) {
         setNodeInteraction(node.id, ia.hook, { kind: 'navigate', screenId: stored.screenId, mode: value })
       }
+      return
+    }
+    /* set-state parts: @state (entry name) and @value (typed by the entry). */
+    if (fieldId.startsWith(IA_PREFIX) && fieldId.includes('@state')) {
+      const hook = fieldId.slice(IA_PREFIX.length, fieldId.indexOf('@state'))
+      const stored = node.interactions?.[hook]
+      if (typeof value !== 'string' || value === '') return
+      setNodeInteraction(node.id, hook, { kind: 'set-state', name: value, value: stored?.kind === 'set-state' ? stored.value : 'toggle' })
+      return
+    }
+    if (fieldId.startsWith(IA_PREFIX) && fieldId.includes('@value')) {
+      const hook = fieldId.slice(IA_PREFIX.length, fieldId.indexOf('@value'))
+      const stored = node.interactions?.[hook]
+      if (stored?.kind !== 'set-state') return
+      const entry = screens.find((s) => s.id === node.screenId)?.state?.find((e) => e.name === stored.name)
+      if (!entry) return
+      let next: boolean | string | number | 'toggle'
+      if (entry.type === 'boolean') {
+        if (value === 'toggle' || value === 'true' || value === 'false') next = value === 'toggle' ? 'toggle' : value === 'true'
+        else return
+      } else if (entry.type === 'number') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return
+        next = value
+      } else {
+        if (typeof value !== 'string') return
+        next = value
+      }
+      setNodeInteraction(node.id, hook, { kind: 'set-state', name: stored.name, value: next })
       return
     }
     // An empty commit (ColorField Clear, a cleared text field) means UNSET, not

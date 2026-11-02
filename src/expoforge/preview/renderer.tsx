@@ -47,6 +47,7 @@ import {
   type ListItem
 } from '@/lib/lists/bindings'
 import { fireInteraction, type PreviewNav } from '@/lib/interactions/resolve'
+import { resolveStateValues, statePreviewValue } from '@/lib/state/screen-state'
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Child index (flat node map → per-parent ordered lists)
@@ -300,6 +301,15 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
    * nodes must not change the hook count). */
   const palette = useProjectStore((s) => s.data.theme?.colors)
   const themeMode = useProjectStore((s) => s.ui.themeMode)
+  /* Screen state (Phase 4 slice 2): the node's own screen's effective values
+   * (declared initials overlaid with live sim values). Stable selectors +
+   * pure merge — never a fresh object from the selector itself. */
+  const screensArr = useProjectStore((s) => s.data.screens)
+  const simValues = useProjectStore((s) => s.sim.values)
+  const stateValues = useMemo(
+    () => resolveStateValues(screensArr.find((s) => s.id === node.screenId), simValues?.[node.screenId]),
+    [screensArr, simValues, node.screenId]
+  )
   /* Wired onPress (Phase 4, P0-1): resolved for every node (rules of hooks —
    * unconditional), consumed only by components whose registry declares the
    * hook (button today). Undefined in edit mode or when unwired. */
@@ -312,6 +322,17 @@ function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps):
   if (!entry) return null
 
   const { props, style: rawStyle } = resolveNode(entry, node, platform)
+
+  /* State binding (Phase 4 slice 2): {state.x} in the text-content field
+   * (text.content, button.title…) resolves against the node's screen's
+   * effective values — edit mode shows initials, sim shows live values.
+   * Undeclared names keep the raw {state.x} text (honest). */
+  {
+    const textKey = textPropField(entry, node.impl)?.key
+    if (textKey !== undefined && typeof props[textKey] === 'string') {
+      props[textKey] = statePreviewValue(props[textKey], stateValues)
+    }
+  }
 
   /* List binding (Phase 2): inside a repeated template, the text-content
    * field (text.content, button.title…) and the image source may hold a

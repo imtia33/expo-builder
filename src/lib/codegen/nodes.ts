@@ -23,6 +23,7 @@ import type { TreeNode } from '@/lib/project/store'
 
 import { getEntry } from '@/expoforge/registry'
 import { isGradientPaint } from '@/lib/paint'
+import { stateEntry, stateExpression } from '@/lib/state/screen-state'
 import {
   bindingExpression,
   isItemBinding,
@@ -33,7 +34,7 @@ import {
 } from '@/lib/lists/bindings'
 
 import { RawCode } from './format'
-import { interactionHookAttr } from './interactions'
+import { interactionHookAttr, type EmitUsage } from './interactions'
 import { fieldDefault, resolveEntry } from './registry'
 import type { NormalizedEntry } from './registry'
 import { gradientAttrs, newPaintUsage, paintsForCodegen, type PaintUsage } from './paint'
@@ -48,13 +49,13 @@ export interface EmitContext {
   paint: PaintUsage
   /** The whole project — interaction emitters resolve screen ids → hrefs. */
   data: ProjectData
-  /** Interaction emission flags: which hook-providing modules this file needs. */
-  nav: { router: boolean }
+  /** Emission-usage flags (router + state names) — see codegen/interactions. */
+  usage: EmitUsage
 }
 
 /** Fresh context for one file (renderScreenFile). */
 export function newEmitContext(imports: ImportCollector, data: ProjectData): EmitContext {
-  return { imports, paint: newPaintUsage(), data, nav: { router: false } }
+  return { imports, paint: newPaintUsage(), data, usage: { router: false, state: new Set() } }
 }
 
 /** Per-subtree emission options (Phase 2 lists). */
@@ -296,7 +297,7 @@ function emitDefault(node: ProjectNode, entry: NormalizedEntry, childEls: JsxEle
     const style = orderedStyle(paintsForCodegen(rest, ctx.paint))
     if (Object.keys(style).length > 0) gradAttrs.push(styleAttr(style))
     const children: JsxChild[] = []
-    pushTextFieldChild(children, node, entry, opts)
+    pushTextFieldChild(children, node, entry, opts, ctx)
     for (const c of childEls) children.push(elChild(c))
     return el('LinearGradient', gradAttrs, children)
   }
@@ -305,17 +306,20 @@ function emitDefault(node: ProjectNode, entry: NormalizedEntry, childEls: JsxEle
   if (Object.keys(style).length > 0) attrs.push(styleAttr(style))
 
   const children: JsxChild[] = []
-  pushTextFieldChild(children, node, entry, opts)
+  pushTextFieldChild(children, node, entry, opts, ctx)
   for (const c of childEls) children.push(elChild(c))
   return el(entry.component, attrs, children)
 }
 
 /**
- * The entry's text-content field as a child, binding-aware (Phase 2): inside
- * a repeated item template, a safe {item.…} value becomes a raw expression
- * child (`<Text>{item.title}</Text>`); otherwise the literal text.
+ * The entry's text-content field as a child, binding-aware (Phase 2 lists +
+ * Phase 4 slice 2 state): inside a repeated item template a safe {item.…}
+ * value becomes a raw expression child (`<Text>{item.title}</Text>`); a
+ * {state.x} value becomes the bare useState variable (`<Text>{busy}</Text>`)
+ * when declared on the node's screen — undeclared names stay literal text,
+ * the honest signal. Otherwise the literal text.
  */
-function pushTextFieldChild(children: JsxChild[], node: ProjectNode, entry: NormalizedEntry, opts: EmitOpts): void {
+function pushTextFieldChild(children: JsxChild[], node: ProjectNode, entry: NormalizedEntry, opts: EmitOpts, ctx: EmitContext): void {
   const textField = entry.fields.find((x) => x.type === 'text')
   if (!textField) return
   const explicit = node.props[textField.key]
@@ -325,6 +329,18 @@ function pushTextFieldChild(children: JsxChild[], node: ProjectNode, entry: Norm
     if (expr) {
       children.push(exprChild(expr))
       return
+    }
+  }
+  if (typeof value === 'string') {
+    const stateName = stateExpression(value)
+    if (stateName) {
+      const screen = ctx.data.screens.find((s) => s.id === node.screenId)
+      if (stateEntry(screen, stateName)) {
+        ctx.usage.state.add(stateName)
+        children.push(exprChild(stateName))
+        return
+      }
+      // Undeclared name → literal text (the raw {state.x} shows — honest).
     }
   }
   children.push(textChild(String(value)))
@@ -382,12 +398,24 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
   // expression — for the composite variants as the label child, for the RN
   // Button as the `title` attribute.
   const labelExpr = opts.itemBinding && typeof rawLabel === 'string' ? bindingExpression(rawLabel) : null
+  // State-bound label (Phase 4 slice 2): {state.x} → the useState variable,
+  // when declared on the node's screen. Applies to BOTH the composite label
+  // child and the RN-Button title attr (the same two surfaces as labelExpr).
+  let stateLabelExpr: string | null = null
+  if (typeof rawLabel === 'string') {
+    const stateName = stateExpression(rawLabel)
+    if (stateName && stateEntry(ctx.data.screens.find((s) => s.id === node.screenId), stateName)) {
+      stateLabelExpr = stateName
+      ctx.usage.state.add(stateName)
+    }
+  }
+  const titleExpr = labelExpr ?? stateLabelExpr
 
   /* ── RN Button: the platform look — no box/typography styles, required
    * onPress, `color` only when set. ── */
   /* Wired hook (Phase 4 P0-1): the RN-Button placeholder handler is
    * REPLACED by the wired action; unwired buttons keep the placeholder. */
-  const wiredPress = interactionHookAttr('onPress', node, ctx.data, ctx.nav)
+  const wiredPress = interactionHookAttr('onPress', node, ctx.data, ctx.usage)
   if (implId === 'rnbutton') {
     const pressAttr: JsxAttr =
       wiredPress ?? {
@@ -399,8 +427,8 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
       }
     const attrs: JsxAttr[] = [
       pressAttr,
-      labelExpr
-        ? { name: 'title', value: { kind: 'raw', value: new RawCode(labelExpr) } }
+      titleExpr
+        ? { name: 'title', value: { kind: 'raw', value: new RawCode(titleExpr) } }
         : { name: 'title', value: { kind: 'string', value: label } }
     ]
     const disabled = node.props.disabled
@@ -454,7 +482,7 @@ function emitButton(node: ProjectNode, entry: NormalizedEntry, childEls: JsxElem
   }
   if (Object.keys(boxStyle).length > 0) attrs.push(styleAttr(boxStyle))
 
-  const labelChildren: JsxChild[] = [labelExpr ? exprChild(labelExpr) : textChild(label)]
+  const labelChildren: JsxChild[] = [titleExpr ? exprChild(titleExpr) : textChild(label)]
   const labelEl = el(
     'Text',
     Object.keys(labelStyle).length > 0 ? [styleAttr(labelStyle)] : [],

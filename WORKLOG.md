@@ -68,7 +68,32 @@
 - vitest **91/91** (76 + 15 new: resolver, store wiring/unwire/validation/undo, href forms, all four impls, item-template button inside renderItem, no-router backward compat, dangling-target no-op, full-file @babel/parser parse). `tsc --noEmit` clean; eslint clean on changed files (the 6 `react-hooks/refs` errors in screen-artboard.tsx pre-exist at HEAD — Phase 3's deliberate read-during-render pattern, not touched).
 - Live browser (agent-browser, DOM-level): Interaction section renders on button select; wired On press → Navigate → Screen 2 (push); **Sim mode: clicking the button swaps Screen 1's artboard to Screen 2's tree** (text marker node appears at artboard-1 coordinates); a second button on Screen 2 wired to Go back returns the artboard to Screen 1's tree (full round trip); Code tab: Screen 1 file emits `import { useRouter } from 'expo-router'` + `const router = useRouter();` + `onPress={() => { router.push('/screen-2'); }}`, Screen 2 file emits `router.back()` and no push; switching the wired button to the RN Button implementation keeps the wiring and replaces the TODO placeholder in generated code.
 
-**Next (Phase 4 remaining):** P0-3 data/API binding (mock API layer + fetch + loading/error/empty), P0-4 auth, P0-5 forms — each builds on the state model (P1-6). P0-2's remainder (pull-to-refresh/refreshing, loading states) also waits on state.
+### ✔ 2026-11-02 — Phase 4 / slice 2: screen state — the P1-6 foundation (COMPLETE)
+
+**Scope:** screen-scoped state entries (generated as useState), `{state.x}` bindings in text/button-title, and the **Set state** interaction action (literal or toggle) — the second event pattern after navigation, and the enabler the remaining P0 rungs (data loading flags, forms, auth state) build on. Cross-screen/app state (zustand) deliberately NOT shipped — per-milestone per the audit.
+
+**Model** (`types.ts`)
+- `ScreenStateEntry { id, name, type: boolean|string|number, initial }` on `Screen.state`; `SimState.values` (per-screen live values, ephemeral like sim history); `InteractionAction` gains `{ kind:'set-state', name, value: literal | 'toggle' }`.
+- Set-state actions are scoped to the NODE'S OWN screen (useState scope); cross-screen writes are rejected at resolve time.
+
+**One resolver** (`src/lib/state/screen-state.ts`) — names validated as identifiers against a BLOCKLIST of builder-emitted identifiers (`router`, `colors`, `useRouter`, …); `{state.x}` parses as a single-segment binding; `resolveStateValues` = declared initials ⊕ live sim values. Preview (statePreviewValue), inspector, and codegen (stateExpression) all go through it — same discipline as list bindings.
+
+**Store** — `setScreenState(screenId, entries)` (normalize: valid+unique names, coerced initials; one undo entry; `state` key dropped when empty) + `simSetState` (sim-only, never undoable; toggles flip the current value; undeclared names ignored).
+
+**Inspector** — Screen tab gains a **State** section (entry cards: identifier name with live validation + revert-on-invalid, type select Text/True-false/Number, typed initial control, delete, Add state with unique default names). The Interaction section gains **Set state**: entry select (own screen's entries; "No state on this screen" hint when empty) + a value control TYPED by the entry (Toggle/True/False select for booleans; number/text fields otherwise).
+
+**Preview** — PreviewNode subscribes to screens + sim.values (stable selectors + pure merge — never fresh objects from selectors) and substitutes `{state.x}` in the text-content field of every component; edit mode shows initials, sim shows live values. The nav context grows `setState`; fireInteraction routes set-state actions through it (dangling/type-mismatch = silent no-op).
+
+**Codegen**
+- `{state.x}` in text content → the bare useState variable (`<Text>{busy}</Text>`); in button titles → expression child (composite) or `title={busy}` attr (RN Button). Undeclared names stay literal text (honest signal). **Found live and fixed**: the RN-Button `title` attr and composite label child bypassed the shared text-child path — both now share `titleExpr` (item binding → state binding → literal) and the fix is pinned by a test.
+- Set-state handlers: `onPress={() => { setBusy(!busy); }}` (toggle) / `setBusy(true)` / `setLabel('It\\'s on')` (escaped string literals).
+- useState declarations are **usage-gated** (like theme tokens): only entries referenced by a binding or handler emit `const [busy, setBusy] = useState(false);` + the react import. Nothing state-related → byte-identical to pre-slice emission (pinned).
+
+**Verification**
+- vitest **108/108** (91 + 17 new: helpers incl. blocklist/coercion/normalize, set-state resolve matrix, store declare/undo/sim writes, codegen: binding, usage gating, toggle/literal/escaped-string handlers, dangling-entry no-op, button-title on both impls, babel parse). `tsc --noEmit` clean; eslint clean on changed files.
+- Live browser (agent-browser): Screen tab State section (add + rename to `busy`, boolean, false); button Title bound `{state.busy}` renders **"false"** on canvas; On press → Set state → busy → Toggle; **Sim: each press flips the title false → true → false** (live values + re-render through the whole tree); Code tab: `import { useState } from 'react'` + `const [busy, setBusy] = useState(false);` + `onPress={() => { setBusy(!busy); }}` + `title={busy}`, no expo-router. (One live-found bug on the way: RNW Button renders as a full-width native `<BUTTON>` at a different y than the composite — click coordinates mattered, not a product bug.)
+
+**Next (Phase 4 remaining):** P0-3 data/API binding (mock API + fetch + loading/error/empty — the loading flags now have state to live in), P0-4 auth, P0-5 forms; P0-2's remainder (pull-to-refresh/refreshing) unblocked by state.
 
 ### ✔ 2026-11-02 — Phase 5: regression verification (COMPLETE)
 
@@ -186,10 +211,11 @@ Extended the EXISTING Add Element / registry / rendering infrastructure — no s
 ### Phase 4 — Capability gaps (only what the reference matrix proves relevant)
 Filled after the Phase 0 matrix; candidates already visible: flows/interactions wiring, lists runtime, data binding, theme system, custom components. No speculative features.
 - [x] **Slice 1 (P0-1 event wiring) — DONE 2026-11-02, see above:** registry-declared hooks (button `onPress` today) wire to Navigate (push/replace) / Back — one resolver, sim runtime, inspector section, expo-router codegen (inline handlers incl. list item templates; RN-Button placeholder replaced; dangling targets emit nothing).
-- [ ] P0-3 data/API binding (mock API layer, fetch, loading/error/empty states) — needs the state model.
+- [x] **Slice 2 (P1-6 screen state foundation) — DONE 2026-11-02, see above:** Screen.state entries → useState (usage-gated), {state.x} bindings in text/button titles (preview + codegen), Set state action (literal/toggle) with sim runtime + typed inspector controls.
+- [ ] P0-3 data/API binding (mock API layer, fetch, loading/error/empty states) — state foundation now in place.
 - [ ] P0-4 auth flows — needs state + data.
-- [ ] P0-5 forms (validation, secure entry, submit lifecycle) — needs state + events(actions beyond nav).
-- [ ] P1-6 state management (screen state + app store) — the enabler for the above + set-state actions + P0-2's remainder (pull-to-refresh, loading states).
+- [ ] P0-5 forms (validation, secure entry, submit lifecycle) — needs state + events(actions beyond nav/set).
+- [ ] P0-2's remainder (pull-to-refresh/refreshing, loading states) — unblocked by slice 2.
 
 ### Phase 5 — Verification ✔ DONE (2026-11-02, see above)
 - [x] Existing projects still open; existing screens intact; existing components functional (pre-Phase-2 fixture + live persistence).
