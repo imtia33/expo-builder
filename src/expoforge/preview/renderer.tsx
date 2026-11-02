@@ -15,15 +15,21 @@
  * children are plain strings; every prop below exists on the RNW 0.21.4 API
  * (verified against node_modules/react-native-web/dist/exports/*).
  */
-import { useMemo, type ReactNode } from 'react'
+import { Fragment, useMemo, type ReactElement, type ReactNode } from 'react'
 import {
   ActivityIndicator,
+  Button,
+  FlatList,
   Image,
   Pressable,
+  SafeAreaView,
   ScrollView,
+  SectionList,
   Switch,
   Text,
   TextInput,
+  TouchableHighlight,
+  TouchableOpacity,
   View,
   type StyleRecord
 } from 'react-native-web'
@@ -31,7 +37,15 @@ import {
 import type { PlatformId } from '@/components/builder/screens/device-presets'
 import type { ProjectNode, Screen } from '@/lib/project/types'
 import { getEntry, resolveImplementation } from '../registry'
-import { resolveNode, textPropValue } from './resolve'
+import { resolveNode, textPropField, textPropValue } from './resolve'
+import {
+  bindingPreviewValue,
+  isItemBinding,
+  listItems,
+  listSections,
+  roleOfNode,
+  type ListItem
+} from '@/lib/lists/bindings'
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Child index (flat node map → per-parent ordered lists)
@@ -68,6 +82,15 @@ function asInt(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value)
   if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
     return Math.round(Number(value))
+  }
+  return undefined
+}
+
+/** Float number guard (activeOpacity etc. — no rounding). */
+function asFloat(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+    return Number(value)
   }
   return undefined
 }
@@ -200,15 +223,52 @@ interface PreviewNodeProps {
   node: ProjectNode
   childIndex: ChildIndex
   platform: PlatformId
+  /**
+   * Phase 2 list binding: the current data row (or section record) while
+   * rendering a repeated item template / section header. Text content and
+   * Image source may hold {item.…}/{section.…} — substituted per row here,
+   * exactly as the code emitter produces them (lib/lists/bindings is the one
+   * resolver both consume).
+   */
+  binding?: unknown
 }
 
-function renderChildNodes(parentId: string, childIndex: ChildIndex, platform: PlatformId): ReactNode[] {
+function renderChildNodes(
+  parentId: string,
+  childIndex: ChildIndex,
+  platform: PlatformId,
+  binding?: unknown
+): ReactNode[] {
   return (childIndex.get(parentId) ?? []).map((child) => (
+    <PreviewNode key={child.id} node={child} childIndex={childIndex} platform={platform} binding={binding} />
+  ))
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * List composition (Phase 2)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/** A list's direct children split by the role they play. */
+function partitionByRole(siblings: ProjectNode[]): { item: ProjectNode[]; header: ProjectNode[]; footer: ProjectNode[]; separator: ProjectNode[]; empty: ProjectNode[] } {
+  const out = { item: [] as ProjectNode[], header: [] as ProjectNode[], footer: [] as ProjectNode[], separator: [] as ProjectNode[], empty: [] as ProjectNode[] }
+  for (const child of siblings) out[roleOfNode(child)].push(child)
+  return out
+}
+
+/** Render the once-per-list chrome (header/footer/separator/empty) — never
+ * per-row: bindings inside them resolve to their raw {item.…} text, the
+ * honest signal that they are not row context. */
+function renderListChrome(nodes: ProjectNode[], childIndex: ChildIndex, platform: PlatformId): ReactElement | null {
+  return <Fragment>{renderChildNodesFor(nodes, childIndex, platform)}</Fragment>
+}
+
+function renderChildNodesFor(nodes: ProjectNode[], childIndex: ChildIndex, platform: PlatformId): ReactNode[] {
+  return nodes.map((child) => (
     <PreviewNode key={child.id} node={child} childIndex={childIndex} platform={platform} />
   ))
 }
 
-function PreviewNode({ node, childIndex, platform }: PreviewNodeProps): ReactNode {
+function PreviewNode({ node, childIndex, platform, binding }: PreviewNodeProps): ReactNode {
   /* Paint resolution (Phase 1): theme tokens bind to the project palette,
    * gradients (backgroundColor) become RNW CSS backgroundImage. Subscribing
    * here means palette edits + light/dark toggles re-render the tree. Hooks
@@ -224,12 +284,28 @@ function PreviewNode({ node, childIndex, platform }: PreviewNodeProps): ReactNod
   if (!entry) return null
 
   const { props, style: rawStyle } = resolveNode(entry, node, platform)
+
+  /* List binding (Phase 2): inside a repeated template, the text-content
+   * field (text.content, button.title…) and the image source may hold a
+   * safe {item.…}/{section.…} binding. Substitute per row — preview and
+   * codegen share the resolver, so the canvas can never drift from code. */
+  if (binding !== undefined) {
+    const textKey = textPropField(entry, node.impl)?.key
+    if (textKey !== undefined && typeof props[textKey] === 'string' && isItemBinding(props[textKey])) {
+      props[textKey] = bindingPreviewValue(props[textKey], binding)
+    }
+    if (node.type === 'image' && typeof props.source === 'string' && isItemBinding(props.source)) {
+      props.source = bindingPreviewValue(props.source, binding)
+    }
+  }
   /* Gradient fills render only on View-like containers (view/scrollview/\n   * blurview + unknown future containers); on Text/Button/etc they degrade to\n   * the first stop color — the exact rule the code generator applies, so the\n   * canvas and generated code can never drift. */
   const gradientCapable = node.type === 'view' || node.type === 'scrollview' || node.type === 'blurview' || (entry.children === 'any' && node.type !== 'button')
   const style = applyPaints(rawStyle, paletteResolver(palette), themeMode, gradientCapable)
   // Only container-policy entries ('any') can host children; leaf and
-  // text-content components never render child nodes (RN rules).
-  const children = entry.children === 'any' ? renderChildNodes(node.id, childIndex, platform) : null
+  // text-content components never render child nodes (RN rules). The binding
+  // context (list row/section) flows down the whole subtree — the template's
+  // nested Texts/Images resolve per row, exactly as the emitter threads it.
+  const children = entry.children === 'any' ? renderChildNodes(node.id, childIndex, platform, binding) : null
 
   switch (node.type) {
     /* text ─ content prop as children; numberOfLines only when > 0 */
@@ -238,7 +314,7 @@ function PreviewNode({ node, childIndex, platform }: PreviewNodeProps): ReactNod
       return (
         <Text testID={node.id} style={style} numberOfLines={numberOfLines > 0 ? numberOfLines : undefined}>
           {/* RN Text children must be plain strings */}
-          {textPropValue(entry, props)}
+          {textPropValue(entry, props, node.impl)}
         </Text>
       )
     }
@@ -265,14 +341,62 @@ function PreviewNode({ node, childIndex, platform }: PreviewNodeProps): ReactNod
       )
     }
 
-    /* button ─ Pressable composite with centered label Text */
+    /* button ─ implementation switching (Phase 2): the SAME composite look
+     * (variant preset + typography split) renders through the active
+     * implementation's real RNW component. The RN-Button variant renders the
+     * platform look instead (its onPress no-op is a rendering requirement —
+     * interactions are wired by the flow system, never faked here). */
     case 'button': {
+      const implId = resolveImplementation(entry, node.impl)?.id ?? 'pressable'
       const variant = asEnum(props.variant, ['primary', 'secondary', 'ghost'] as const) ?? 'primary'
       const preset = BUTTON_VARIANT_BASE[variant]
       const { box, label } = splitTypographyStyle(style)
+      const title = textPropValue(entry, props, node.impl) || 'Button'
+      const disabled = asBool(props.disabled) ?? false
+
+      if (implId === 'rnbutton') {
+        const color = asColor(props.color)
+        return (
+          <Button
+            testID={node.id}
+            title={title}
+            color={color}
+            disabled={disabled}
+            onPress={() => {}}
+          />
+        )
+      }
+      if (implId === 'touchableopacity') {
+        const activeOpacity = asFloat(props.activeOpacity)
+        return (
+          <TouchableOpacity
+            testID={node.id}
+            style={{ ...preset.box, ...box }}
+            disabled={disabled}
+            activeOpacity={activeOpacity}
+          >
+            <Text style={{ ...preset.label, ...label }}>{title}</Text>
+          </TouchableOpacity>
+        )
+      }
+      if (implId === 'touchablehighlight') {
+        const activeOpacity = asFloat(props.activeOpacity)
+        const underlayColor = asColor(props.underlayColor)
+        return (
+          <TouchableHighlight
+            testID={node.id}
+            style={{ ...preset.box, ...box }}
+            disabled={disabled}
+            activeOpacity={activeOpacity}
+            underlayColor={underlayColor}
+          >
+            <Text style={{ ...preset.label, ...label }}>{title}</Text>
+          </TouchableHighlight>
+        )
+      }
       return (
-        <Pressable testID={node.id} style={{ ...preset.box, ...box }} disabled={asBool(props.disabled) ?? false}>
-          <Text style={{ ...preset.label, ...label }}>{textPropValue(entry, props)}</Text>
+        <Pressable testID={node.id} style={{ ...preset.box, ...box }} disabled={disabled}>
+          <Text style={{ ...preset.label, ...label }}>{title}</Text>
         </Pressable>
       )
     }
@@ -291,6 +415,106 @@ function PreviewNode({ node, childIndex, platform }: PreviewNodeProps): ReactNod
         >
           {children}
         </ScrollView>
+      )
+    }
+
+    /* view ─ implementation switching (Phase 2). safe-area → RNW's
+     * SafeAreaView (a real component; web insets inside the artboard are zero,
+     * so it renders as a plain container — the honest web equivalent). */
+    case 'view': {
+      if (resolveImplementation(entry, node.impl)?.id === 'safe-area') {
+        return (
+          <SafeAreaView testID={node.id} style={style}>
+            {children}
+          </SafeAreaView>
+        )
+      }
+      return (
+        <View testID={node.id} style={style}>
+          {children}
+        </View>
+      )
+    }
+
+    /* flatlist (Phase 2) — the item template repeats once per data row. The
+     * template children render through the REAL RNW FlatList (virtualized
+     * scrolling on canvas); bindings substitute per row. Header / footer /
+     * separator / empty children become the corresponding list chrome. */
+    case 'flatlist': {
+      const roles = partitionByRole(childIndex.get(node.id) ?? [])
+      const items = listItems(props)
+      const showsIndicator = asBool(props.showsScrollIndicator) ?? true
+      const horizontal = asBool(props.horizontal) ?? false
+      const numColumns = Math.max(1, Math.min(4, asInt(props.numColumns) ?? 1))
+      const gap = Math.max(0, Math.min(64, asInt(props.itemSpacing) ?? 0))
+      const rowEls = items.map((row, i) => (
+        <Fragment key={i}>
+          {roles.item.map((c) => (
+            <PreviewNode key={c.id} node={c} childIndex={childIndex} platform={platform} binding={row} />
+          ))}
+        </Fragment>
+      ))
+      return (
+        <FlatList
+          testID={node.id}
+          style={style}
+          data={items}
+          renderItem={({ index }) => rowEls[index] ?? null}
+          horizontal={horizontal}
+          numColumns={horizontal ? 1 : numColumns}
+          showsVerticalScrollIndicator={showsIndicator}
+          showsHorizontalScrollIndicator={showsIndicator}
+          contentContainerStyle={gap > 0 ? { gap } : undefined}
+          ListHeaderComponent={roles.header.length > 0 ? renderListChrome(roles.header, childIndex, platform) : undefined}
+          ListFooterComponent={roles.footer.length > 0 ? renderListChrome(roles.footer, childIndex, platform) : undefined}
+          ItemSeparatorComponent={roles.separator.length > 0 ? renderListChrome(roles.separator, childIndex, platform) : undefined}
+          ListEmptyComponent={roles.empty.length > 0 ? renderListChrome(roles.empty, childIndex, platform) : undefined}
+        />
+      )
+    }
+
+    /* sectionlist (Phase 2) — rows grouped per section; the header design
+     * (role 'header') renders once per section with {section.…} bindings.
+     * RNW consumes the REAL SectionList with RN's section shape ({ header,
+     * data }); the builder's array editor stores { header, items } — mapped
+     * here and by the code emitter identically. */
+    case 'sectionlist': {
+      const roles = partitionByRole(childIndex.get(node.id) ?? [])
+      const sections = listSections(props)
+      const showsIndicator = asBool(props.showsScrollIndicator) ?? true
+      const gap = Math.max(0, Math.min(64, asInt(props.itemSpacing) ?? 0))
+      const rnSections: Array<{ header: string | undefined; data: ListItem[] }> = sections.map((s) => ({ header: s.header, data: s.items }))
+      const sectionIndex = new Map<unknown, number>(rnSections.map((s, i) => [s, i] as const))
+      const rowEls = rnSections.map((section) =>
+        section.data.map((row, i) => (
+          <Fragment key={i}>
+            {roles.item.map((c) => (
+              <PreviewNode key={c.id} node={c} childIndex={childIndex} platform={platform} binding={row} />
+            ))}
+          </Fragment>
+        ))
+      )
+      const headerEls = rnSections.map((section) => (
+        <Fragment key={sectionIndex.get(section)}>
+          {roles.header.map((c) => (
+            <PreviewNode key={c.id} node={c} childIndex={childIndex} platform={platform} binding={section} />
+          ))}
+        </Fragment>
+      ))
+      return (
+        <SectionList
+          testID={node.id}
+          style={style}
+          sections={rnSections}
+          renderItem={({ section, index }) => rowEls[sectionIndex.get(section) ?? 0]?.[index] ?? null}
+          renderSectionHeader={({ section }) => headerEls[sectionIndex.get(section) ?? 0] ?? null}
+          showsVerticalScrollIndicator={showsIndicator}
+          showsHorizontalScrollIndicator={showsIndicator}
+          contentContainerStyle={gap > 0 ? { gap } : undefined}
+          ListFooterComponent={roles.footer.length > 0 ? renderListChrome(roles.footer, childIndex, platform) : undefined}
+          ItemSeparatorComponent={roles.separator.length > 0 ? renderListChrome(roles.separator, childIndex, platform) : undefined}
+          ListEmptyComponent={roles.empty.length > 0 ? renderListChrome(roles.empty, childIndex, platform) : undefined}
+        />
       )
     }
 

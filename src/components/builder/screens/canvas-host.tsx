@@ -278,7 +278,12 @@ export function CanvasHost({ activeTool, insertTool = null, onPlaced, className 
         onPlacedRef.current?.()
         return
       }
-      const outcome = placeComponent(tool.type, e.clientX, e.clientY, point)
+      const outcome = placeComponent(
+        { type: tool.type, impl: tool.impl, props: tool.props },
+        e.clientX,
+        e.clientY,
+        point
+      )
       if (outcome.ok) onPlacedRef.current?.()
     },
     []

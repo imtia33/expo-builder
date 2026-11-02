@@ -23,8 +23,21 @@ export type AttrValue =
   /** Any JS value rendered inside `name={…}` via printValue (numbers, booleans,
    *  objects, arrays, RawCode). */
   | { kind: 'raw'; value: unknown }
+  /** A JSX ELEMENT in parens: `name={(<View …/>)}` — used for element-typed
+   *  props such as ListHeaderComponent (Phase 2 lists). */
+  | { kind: 'jsx'; value: JsxElement }
+  /** An arrow function with destructured params returning an element:
+   *  `name={({ item }) => (<View…/>)}` — renderItem / renderSectionHeader. */
+  | { kind: 'arrow'; params: string; value: JsxElement }
 
-export type JsxChild = { kind: 'element'; el: JsxElement } | { kind: 'text'; text: string }
+export type JsxChild =
+  | { kind: 'element'; el: JsxElement }
+  | { kind: 'text'; text: string }
+  | { kind: 'expr'; code: string }
+
+/** Tag constant for a Fragment (`<>…</>`): multiple item-template children
+ *  of a list render inside one fragment (Phase 2). */
+export const FRAGMENT = ''
 
 export interface JsxElement {
   tag: string
@@ -42,6 +55,12 @@ export function elChild(el: JsxElement): JsxChild {
 
 export function textChild(text: string): JsxChild {
   return { kind: 'text', text }
+}
+
+/** A raw JS expression child: `<Text>{item.title}</Text>` (safe member chains
+ *  from list bindings — never arbitrary user code; see lib/lists/bindings). */
+export function exprChild(code: string): JsxChild {
+  return { kind: 'expr', code }
 }
 
 export function styleAttr(style: Record<string, unknown>): JsxAttr {
@@ -65,6 +84,23 @@ function renderAttr(a: JsxAttr, col: number): string {
     if (/[{}<>"]|\n/.test(v)) return `${a.name}={${jsStringLiteral(v)}}`
     return `${a.name}="${v}"`
   }
+  if (a.value.kind === 'jsx') {
+    // `name={({ ... })}` with the body on its own lines — element-typed props
+    // (ListHeaderComponent & friends, Phase 2). The returned string embeds its
+    // own newlines, so the caller demotes the open tag to one-attr-per-line
+    // and the indent stays absolute.
+    const bodyCol = col + 2
+    // renderElement returns lines already carrying their own absolute indent —
+    // join with plain newlines (no extra padding).
+    const body = renderElement(a.value.value, bodyCol).join('\n')
+    return `${a.name}={(${'\n'}${body}${'\n'}${' '.repeat(col)})}`
+  }
+  if (a.value.kind === 'arrow') {
+    // `name={(params) => (\n<body>\ncol)}` — renderItem / renderSectionHeader.
+    const bodyCol = col + 2
+    const body = renderElement(a.value.value, bodyCol).join('\n')
+    return `${a.name}={(${a.value.params}) => (${'\n'}${body}${'\n'}${' '.repeat(col)})}`
+  }
   // The value's true start column is just past `name={`; its break layout
   // (body at col+2, closing at col) shares the attribute line's indent.
   return `${a.name}={${printValue(a.value.value, col + a.name.length + 2, col)}}`
@@ -73,11 +109,17 @@ function renderAttr(a: JsxAttr, col: number): string {
 /** Render `element` at column `col`; returns fully indented lines. */
 export function renderElement(element: JsxElement, col: number): string[] {
   const { tag, attrs } = element
+  const isFragment = tag === FRAGMENT
+  const open = isFragment ? '<>' : `<${tag}`
+  const close = isFragment ? '</>' : `</${tag}>`
   const textParts = element.children.filter((c): c is Extract<JsxChild, { kind: 'text' }> => c.kind === 'text')
   const text = textParts.length > 0 ? textParts.map((t) => t.text).join(' ') : null
   const childEls = element.children.filter((c): c is Extract<JsxChild, { kind: 'element' }> => c.kind === 'element')
   const hasText = text !== null && text.length > 0
-  const selfClose = !hasText && childEls.length === 0
+  const hasExpr = element.children.some((c) => c.kind === 'expr')
+  // Fragments never self-close; expr-only children (a bound Text) also keep an
+  // open/close pair: `<Text>{item.title}</Text>`.
+  const selfClose = !isFragment && !hasText && !hasExpr && childEls.length === 0
 
   // Attempt 1: all attributes on the opening line.
   const attrSingle: string[] = []
@@ -92,13 +134,14 @@ export function renderElement(element: JsxElement, col: number): string[] {
     attrSingle.push(s)
     pos += s.length + 1
   }
-  const openSingle = singleUsable ? `<${tag}${attrs.length > 0 ? ` ${attrSingle.join(' ')}` : ''}` : ''
+  const openSingle = singleUsable ? `${open}${attrs.length > 0 ? ` ${attrSingle.join(' ')}` : ''}` : ''
 
   const textInline = (t: string): string => (rawTextSafe(t) ? t : `{${jsStringLiteral(t)}}`)
 
-  // Attempt 2 (no element children): the entire element on one line.
-  if (childEls.length === 0 && singleUsable) {
-    const single = selfClose ? `${openSingle} />` : `${openSingle}>${text ? textInline(text) : ''}</${tag}>`
+  // Attempt 2 (no element children, no expressions): the entire element on one line.
+  if (childEls.length === 0 && !hasExpr && singleUsable) {
+    const inner = text ? textInline(text) : ''
+    const single = selfClose ? `${openSingle} />` : `${openSingle}${isFragment ? '' : '>'}${inner}${close}`
     if (col + single.length <= MAX_WIDTH) return [`${' '.repeat(col)}${single}`]
   }
 
@@ -107,15 +150,18 @@ export function renderElement(element: JsxElement, col: number): string[] {
 
   // Opening: inline attributes when the opening line fits, else one per line.
   if (singleUsable && col + openSingle.length + (selfClose ? 3 : 1) <= MAX_WIDTH) {
-    lines.push(pad + openSingle + (selfClose ? ' />' : '>'))
+    lines.push(pad + openSingle + (selfClose ? ' />' : isFragment ? '' : '>'))
   } else {
-    lines.push(pad + `<${tag}`)
+    lines.push(pad + open)
     for (const a of attrs) lines.push(`${' '.repeat(col + 2)}${renderAttr(a, col + 2)}`)
-    lines.push(pad + (selfClose ? '/>' : '>'))
+    lines.push(pad + (selfClose ? '/>' : isFragment ? '' : '>'))
   }
 
   if (hasText) lines.push(`${' '.repeat(col + 2)}${textInline(text)}`)
-  for (const c of childEls) lines.push(...renderElement(c.el, col + 2))
-  if (!selfClose) lines.push(pad + `</${tag}>`)
+  for (const c of element.children) {
+    if (c.kind === 'element') lines.push(...renderElement(c.el, col + 2))
+    else if (c.kind === 'expr') lines.push(`${' '.repeat(col + 2)}{${c.code}}`)
+  }
+  if (!selfClose) lines.push(pad + close)
   return lines
 }

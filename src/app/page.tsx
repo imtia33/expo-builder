@@ -44,7 +44,7 @@ export default function Home() {
       ? null
       : tool.kind === 'screen'
         ? { kind: 'screen' }
-        : { kind: 'component', type: tool.type }
+        : { kind: 'component', type: tool.type, impl: tool.impl, props: tool.props }
 
   /* ── placement done/cancelled → back to select ── */
   const onPlaced = useCallback(() => setTool('select'), [])

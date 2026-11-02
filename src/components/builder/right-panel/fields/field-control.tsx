@@ -6,6 +6,7 @@
  */
 
 import type { FieldChangeValue, FieldSpec } from '../schema'
+import { ArrayField } from './array-field'
 import { ColorField } from './color-field'
 import { NumberField } from './number-field'
 import { SegmentedField, SelectField, SwitchField, TextAreaField, TextField } from './simple-fields'
@@ -38,5 +39,7 @@ export function FieldControl({ field, ...rest }: FieldControlProps) {
       return <ColorField field={field} {...rest} />
     case 'slider':
       return <SliderField field={field} {...rest} />
+    case 'array-list':
+      return <ArrayField field={field} onChange={rest.onChange} className={rest.className} />
   }
 }

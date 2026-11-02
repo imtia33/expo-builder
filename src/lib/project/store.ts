@@ -16,6 +16,7 @@ import { persist } from 'zustand/middleware'
 
 import { DEVICE_PRESETS, deviceById, type PlatformId } from '@/components/builder/screens/device-presets'
 import { getEntry } from '@/expoforge/registry'
+import { isListEntryType } from '@/lib/lists/bindings'
 import { DEFAULT_THEME_COLORS } from '@/lib/paint'
 import { HistoryManager, installHistoryWatchdog } from './history'
 import type {
@@ -384,6 +385,14 @@ export interface InsertNodeInput {
   order?: number
   /** Placement rect in the parent's coordinate space (or the screen's). */
   rect?: { left: number; top: number; width?: number; height?: number | 'auto' }
+  /** Phase 2: implementation variant the node is created with (registry
+   *  implementations[]; e.g. view → 'safe-area', button → 'touchableopacity').
+   *  Stored as node.impl — switchable later from the inspector. */
+  impl?: string
+  /** Phase 2: insert-time prop overrides written EXPLICITLY into node.props
+   *  (visible + editable in the inspector immediately; e.g. a horizontal
+   *  FlatList form inserts { horizontal: true }). Undefined values skip. */
+  props?: Record<string, unknown>
 }
 
 interface ProjectState {
@@ -465,6 +474,9 @@ interface ProjectState {
   toggleNodeHidden: (id: string) => void
   /** Switch implementation variant (registry implementations[]) keeping compatible props. */
   setNodeImpl: (id: string, implId: string) => void
+  /** Phase 2: set the list role of a DIRECT child of a list node
+   *  (flatlist/sectionlist). undefined role = 'item'. */
+  setNodeListRole: (id: string, role: 'item' | 'header' | 'footer' | 'separator' | 'empty') => void
   /** Patch entering/exiting animation specs (undefined value removes the phase). */
   patchNodeAnimations: (id: string, patch: Partial<NodeAnimations>) => void
   /** Replace preserved verbatim attribute source (code-controlled props). */
@@ -1033,9 +1045,10 @@ export const useProjectStore = create<ProjectState>()(
             parentId: input.parentId ?? null,
             type: input.type,
             order,
-            props: {},
+            props: input.props ? { ...input.props } : {},
             style
           }
+          if (input.impl !== undefined) node.impl = input.impl
           commit((st) => {
             // bump orders of siblings after insertion point
             const nodes: Record<string, ProjectNode> = {}
@@ -1180,6 +1193,27 @@ export const useProjectStore = create<ProjectState>()(
                 nodes: {
                   ...st.data.nodes,
                   [id]: hasAny ? { ...node, animations: next } : { ...node, animations: undefined }
+                }
+              }
+            }
+          }),
+
+        setNodeListRole: (id, role) =>
+          commit((st) => {
+            const node = st.data.nodes[id]
+            if (!node) return {}
+            // Only DIRECT children of a list participate (any node type — a
+            // nested list can play a role too); anything else is a no-op (the
+            // inspector only shows the control for that case).
+            const listId = node.parentId
+            const parent = listId ? st.data.nodes[listId] : undefined
+            if (!parent || !isListEntryType(parent.type)) return {}
+            return {
+              data: {
+                ...st.data,
+                nodes: {
+                  ...st.data.nodes,
+                  [id]: role === 'item' ? { ...node, listRole: undefined } : { ...node, listRole: role }
                 }
               }
             }

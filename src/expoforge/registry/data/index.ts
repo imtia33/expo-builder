@@ -9,9 +9,11 @@ import { ACTIVITYINDICATOR_ENTRY } from './activityindicator'
 import { BLURVIEW_ENTRY } from './blurview'
 import { BUTTON_ENTRY } from './button'
 import { DIVIDER_ENTRY } from './divider'
+import { FLATLIST_ENTRY } from './flatlist'
 import { IMAGE_ENTRY } from './image'
 import { LINEARGRADIENT_ENTRY } from './lineargradient'
 import { SCROLLVIEW_ENTRY } from './scrollview'
+import { SECTIONLIST_ENTRY } from './sectionlist'
 import { SWITCH_ENTRY } from './switch'
 import { TEXTINPUT_ENTRY } from './textinput'
 
@@ -24,7 +26,9 @@ export const DATA_ENTRIES: RegistryEntry[] = [
   ACTIVITYINDICATOR_ENTRY,
   DIVIDER_ENTRY,
   LINEARGRADIENT_ENTRY,
-  BLURVIEW_ENTRY
+  BLURVIEW_ENTRY,
+  FLATLIST_ENTRY,
+  SECTIONLIST_ENTRY
 ]
 
 export {
@@ -32,9 +36,11 @@ export {
   BLURVIEW_ENTRY,
   BUTTON_ENTRY,
   DIVIDER_ENTRY,
+  FLATLIST_ENTRY,
   IMAGE_ENTRY,
   LINEARGRADIENT_ENTRY,
   SCROLLVIEW_ENTRY,
+  SECTIONLIST_ENTRY,
   SWITCH_ENTRY,
   TEXTINPUT_ENTRY
 }

@@ -55,7 +55,9 @@ const LAYER_ICON_SLOTS: Record<string, IconSlot> = {
   divider: 'tool.divider',
   lineargradient: 'tool.lineargradient',
   blurview: 'tool.blurview',
-  activityindicator: 'tool.activityindicator'
+  activityindicator: 'tool.activityindicator',
+  flatlist: 'tool.list',
+  sectionlist: 'tool.sectionlist'
 }
 
 /** The layer-row slot for a registry entry id (fallback: the generic layer glyph). */

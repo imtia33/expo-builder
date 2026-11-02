@@ -9,7 +9,7 @@
  * needed — this declaration is ambient and project-wide.
  */
 declare module 'react-native-web' {
-  import type { ComponentType, ReactNode } from 'react'
+  import type { ComponentType, ReactElement, ReactNode } from 'react'
 
   /* Styles — RNW accepts plain objects (ExpoForge uses inline objects only,
    * never StyleSheet). Values may be nested (transform steps, shadow offsets);
@@ -155,4 +155,92 @@ declare module 'react-native-web' {
     hidesWhenStopped?: boolean
   }
   export const ActivityIndicator: ComponentType<ActivityIndicatorProps>
+
+  /* ── Phase 2 additions ───────────────────────────────────────────────────
+   * Same discipline as above: prop surfaces written against the actual
+   * flow types in node_modules/react-native-web/dist/exports/* (Button,
+   * FlatList, SectionList, SafeAreaView, TouchableOpacity, TouchableHighlight
+   * all exist as real RNW 0.21.4 implementations — only the .d.ts was
+   * missing them). */
+
+  /* Button — RNW's web implementation of the core RN Button (system-ish
+   * look). onPress/title are required by RN's own types. */
+  export interface ButtonProps {
+    testID?: string
+    title: string
+    onPress: (event: unknown) => void
+    color?: string
+    disabled?: boolean
+    accessibilityLabel?: string
+  }
+  export const Button: ComponentType<ButtonProps>
+
+  /* TouchableOpacity / TouchableHighlight — the real Touchable implementations
+   * (deprecated upstream in RN 0.76+ but first-class in RNW 0.21.4). */
+  export interface TouchableOpacityProps {
+    style?: StyleProp
+    testID?: string
+    children?: ReactNode
+    disabled?: boolean
+    activeOpacity?: number
+    hitSlop?: number | { top?: number; left?: number; bottom?: number; right?: number }
+    onPress?: (event: unknown) => void
+    accessibilityLabel?: string
+  }
+  export const TouchableOpacity: ComponentType<TouchableOpacityProps>
+
+  export interface TouchableHighlightProps extends TouchableOpacityProps {
+    underlayColor?: string
+    onShowUnderlay?: () => void
+    onHideUnderlay?: () => void
+  }
+  export const TouchableHighlight: ComponentType<TouchableHighlightProps>
+
+  /* SafeAreaView — RNW applies env(safe-area-inset-*) padding; insets are zero
+   * on desktop web, so it renders like a plain View (the honest equivalent). */
+  export interface SafeAreaViewProps extends ViewProps {}
+  export const SafeAreaView: ComponentType<SafeAreaViewProps>
+
+  /* Shared virtualized-list surface for FlatList / SectionList. The chrome
+   * props accept components OR elements (RN's documented union). */
+  export interface ListRenderItemInfo {
+    item: unknown
+    index: number
+    section?: unknown
+  }
+  export type ListChildComponent = ComponentType<Record<string, never>> | ReactElement | null | undefined
+  export interface VirtualizedListProps {
+    style?: StyleProp
+    testID?: string
+    data?: unknown[] | null
+    renderItem: (info: ListRenderItemInfo) => ReactElement | null
+    horizontal?: boolean
+    numColumns?: number
+    showsVerticalScrollIndicator?: boolean
+    showsHorizontalScrollIndicator?: boolean
+    contentContainerStyle?: StyleProp
+    keyExtractor?: (item: unknown, index: number) => string
+    ListHeaderComponent?: ListChildComponent
+    ListFooterComponent?: ListChildComponent
+    ItemSeparatorComponent?: ListChildComponent
+    ListEmptyComponent?: ListChildComponent
+    onScroll?: (event: unknown) => void
+  }
+  export interface FlatListProps extends VirtualizedListProps {
+    onEndReached?: (info: { distanceFromEnd: number }) => void
+    onEndReachedThreshold?: number
+  }
+  export const FlatList: ComponentType<FlatListProps>
+
+  export interface SectionListSection {
+    [key: string]: unknown
+    data?: unknown[]
+  }
+  export interface SectionListProps extends VirtualizedListProps {
+    sections?: SectionListSection[]
+    renderSectionHeader?: (info: { section: SectionListSection }) => ReactElement | null
+    renderSectionFooter?: (info: { section: SectionListSection }) => ReactElement | null
+    SectionSeparatorComponent?: ListChildComponent
+  }
+  export const SectionList: ComponentType<SectionListProps>
 }

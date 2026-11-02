@@ -242,6 +242,13 @@ export interface ProjectNode {
   rawCodeProps?: Record<string, string>
   hidden?: boolean
   locked?: boolean
+  /**
+   * Phase 2 lists: the role a DIRECT child of a list node (flatlist/
+   * sectionlist) plays in the list's runtime composition. Undefined = 'item'
+   * (the repeated item template). Editor-only model concern; never emitted as
+   * a component prop — list emitters read it from the node directly.
+   */
+  listRole?: 'item' | 'header' | 'footer' | 'separator' | 'empty'
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -292,7 +299,15 @@ export interface SimState {
 
 export type InsertTool =
   | { kind: 'screen' }
-  | { kind: 'component'; type: string }
+  | {
+      kind: 'component'
+      type: string
+      /** Implementation variant to create the node with (registry implementations[]). */
+      impl?: string
+      /** Insert-time prop overrides (e.g. flatlist horizontal form). Explicit
+       *  values in node.props — visible/editable in the inspector afterwards. */
+      props?: Record<string, unknown>
+    }
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Code ⇄ visual round-trip payloads (lib/codegen/parse-back → store)

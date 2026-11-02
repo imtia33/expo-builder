@@ -19,8 +19,9 @@ import type { GradientPaint, TokenPaint } from '@/lib/paint'
 export const MIXED = Symbol('mixed')
 export type MixedValue<T> = T | typeof MIXED
 
-/** Values a field control can commit (paint objects for color fields). */
-export type FieldChangeValue = string | number | boolean | GradientPaint | TokenPaint
+/** Values a field control can commit (paint objects for color fields;
+ * plain arrays for the Phase 2 list data-source editor). */
+export type FieldChangeValue = string | number | boolean | GradientPaint | TokenPaint | unknown[]
 
 export interface FieldOption {
   value: string
@@ -105,6 +106,32 @@ export interface LabelSpec {
   label: string
 }
 
+/** One per-row field of an array editor (Phase 2 list data sources). */
+export interface ArrayItemFieldSpec {
+  key: string
+  label: string
+  placeholder?: string
+  /** 'array' = a nested rows list inside each row (SectionList sections:
+   * header + items). Nested item fields come from `subItemFields`. */
+  type: 'string' | 'array'
+  subItemFields?: ArrayItemFieldSpec[]
+}
+
+/** The Phase 2 structured list editor: rows of a list's static data source
+ * (flatlist data / sectionlist sections), each row a small field card. */
+export interface ArrayListFieldSpec extends FieldBase {
+  kind: 'array-list'
+  /** Current value (row objects); unset renders the registry default rows
+   * as ghosts — first edit commits the whole array. */
+  value?: unknown[]
+  defaultValue?: unknown[]
+  itemFields: ArrayItemFieldSpec[]
+  /** Rows cannot be added/removed below/above these counts. */
+  minItems?: number
+  /** Shown while the value is unset ("Using defaults"). */
+  ghostNote?: string
+}
+
 export type FieldSpec =
   | TextFieldSpec
   | NumberFieldSpec
@@ -114,6 +141,7 @@ export type FieldSpec =
   | ColorFieldSpec
   | SliderFieldSpec
   | LabelSpec
+  | ArrayListFieldSpec
 
 export type FieldKind = FieldSpec['kind']
 

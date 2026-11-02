@@ -39,7 +39,16 @@ export function entriesByCategory(category: RegistryCategory): RegistryEntry[] {
   return ALL.filter((e) => e.category === category)
 }
 
-export const REGISTRY_TOOL_ORDER = ['view', 'text', 'textinput', 'button', 'image', 'scrollview'] as const
+export const REGISTRY_TOOL_ORDER = [
+  'view',
+  'text',
+  'textinput',
+  'button',
+  'image',
+  'scrollview',
+  'flatlist',
+  'sectionlist'
+] as const
 export const REGISTRY_FLYOUT_ORDER = [
   'switch',
   'divider',

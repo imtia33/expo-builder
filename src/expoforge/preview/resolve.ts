@@ -16,6 +16,7 @@
  */
 import type { PlatformId } from '@/components/builder/screens/device-presets'
 import type { ProjectNode } from '@/lib/project/types'
+import { effectiveProps } from '../registry/types'
 import type { PropField, RegistryEntry } from '../registry/types'
 
 export interface ResolvedNode {
@@ -32,8 +33,13 @@ export function resolveNode(
 ): ResolvedNode {
   const props: Record<string, unknown> = {}
 
-  // 1. registry defaults
-  for (const field of entry.props) {
+  // 1. registry defaults — from the EFFECTIVE schema (base entry props overlaid
+  //    with the active implementation's; Phase 2 impl-awareness. Image's
+  //    variants have carried the whole prop surface since v3; view and button
+  //    join them now, so the one resolver must honor node.impl exactly like
+  //    the inspector and the code generator do).
+  const fields = effectiveProps(entry, node.impl)
+  for (const field of fields) {
     if (field.default !== undefined) {
       props[field.key] = field.default
     }
@@ -66,13 +72,13 @@ export function resolveNode(
  * `title` on button. Its value renders as JSX children in the preview and is
  * emitted as children by codegen.
  */
-export function textPropField(entry: RegistryEntry): PropField | undefined {
-  return entry.props.find((field) => field.type === 'text')
+export function textPropField(entry: RegistryEntry, impl?: string): PropField | undefined {
+  return effectiveProps(entry, impl).find((field) => field.type === 'text')
 }
 
 /** The resolved text content of a node ('' when the entry has no text field). */
-export function textPropValue(entry: RegistryEntry, props: Record<string, unknown>): string {
-  const field = textPropField(entry)
+export function textPropValue(entry: RegistryEntry, props: Record<string, unknown>, impl?: string): string {
+  const field = textPropField(entry, impl)
   if (!field) return ''
   const value = props[field.key]
   return value === undefined || value === null ? '' : String(value)

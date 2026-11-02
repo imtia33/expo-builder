@@ -41,7 +41,42 @@
 
 ---
 
-## ◐ IN PROGRESS — next: Phase 2 (component insertion)
+## ◐ IN PROGRESS — next: Phase 3 (runtime bug fixes — flicker, root causes only)
+
+### ✔ 2026-11-02 — Phase 2: component insertion improvements (COMPLETE)
+
+**Scope (spec §2, all three bullets shipped):** View options (3 types), Lists (5 forms + data source + roles + bindings), Button implementation choice (4 impls). Everything extends the EXISTING registry/insert/inspector/codegen systems — no second picker, no duplicate engines.
+
+**Implementation-awareness (the foundation — also fixed a pre-existing gap)**
+- `ProjectNode.impl` now flows through EVERY consumer: `resolveNode` + `textPropField` (preview) and `resolveEntry(type, impl)` (codegen) use `effectiveProps` + the active impl's import/component. Until now image's `react-native` variant emitted `expo-image` imports in generated code (v3 shipped impl switching to the preview only) — the inspector also showed no impl props. Both fixed; switching is now consistent end-to-end.
+- New inspector section "Implementation" (entries with >1 variants) wired to the existing `setNodeImpl` (which keeps the keys both impls share). The prop surface swaps live with the implementation.
+
+**View options (3 types)**
+- View tool → open-pencil dual-button [main][caret]; menu: View / **Safe Area View** (`react-native-safe-area-context`, never RN core SafeAreaView — the package the screen wrapper already uses; `edges` enum maps to the array form, 'all' = package default, nothing emitted) / Scroll View (existing entry — cross-type variant, no duplicate implementation).
+- Preview: RNW SafeAreaView (real component; web insets are zero inside the artboard — renders as a plain container, documented in the impl description).
+
+**Button implementation choice (4)**
+- One composite look (variant presets + typography split, shared by preview and emitter) across **Pressable** (default) / **TouchableOpacity** / **TouchableHighlight** / **RN Button**. Impl-specific props (activeOpacity, underlayColor, hitSlop, android_ripple) are emitted only when set — RN's documented defaults apply on device.
+- RN Button: RN's types REQUIRE onPress, so generated code carries an explicit `/* TODO: wire an action */` placeholder (stated in the impl description); the other variants keep onPress omitted — no dead handlers. All variants remain wired to the same interaction model (onPress stays code-controlled until the flow system lands).
+
+**Lists (5 forms + the full list stack)**
+- Toolbar List tool (L) → menu: Flat List (vertical) / Horizontal (inserts `horizontal: true`) / Grid (numColumns=2) / Section List (cross-type) / Manual list (ScrollView — existing entry). Horizontal/grid are insert-time props: visible + editable in the inspector afterwards; `numColumns` is hidden while horizontal (`visibleWhen` — new generic schema gate, applied by inspector AND emitter).
+- **Data source**: static array (array editor — the registry 'array' PropField finally gets its control; ghost rows = registry defaults, first edit commits the whole array, one undo entry). flatlist `data` (title/subtitle/image rows), sectionlist `sections` (header + nested rows).
+- **Roles** (`node.listRole`): direct list children are the **item template** (default) or header/footer/separator/empty (ListHeader/FooterComponent, ItemSeparatorComponent, ListEmptyComponent; for sectionlist, header = renderSectionHeader). Inspector "List role" select + tree chips; `setNodeListRole` in the store.
+- **Bindings** (`src/lib/lists/bindings.ts` — ONE resolver, preview + codegen both consume it, so canvas and code can never drift): Text content / Image source / button title accept `{item.title}`, `{item.address.city}`, `{section.header}`. Safe member chains only (1–4 identifier segments) — user strings can never become arbitrary generated code. Preview: resolved → value, missing/non-primitive → the raw `{item.…}` text (honest unresolved signal). Codegen: real expressions (`<Text>{item.title}</Text>`, `source={{ uri: item.image }}`) via a new RawCode-spliced attr form.
+- **Seeding**: inserting a list creates its item template (in-flow card View + bound Text) in the SAME undo entry — the canvas immediately shows repeating rows fed by the data source. SectionList also seeds a header child bound to `{section.header}`. Everything seeded is ordinary model content (restyle/re-bind/delete freely).
+- Codegen: `renderItem` / `renderSectionHeader` arrow attrs + element-typed chrome attrs (new JSX-IR attr kinds 'arrow'/'jsx'); fragment support (`<>`) for multi-child templates; `data`/`sections` inline literals (explicit rows, else registry default); `itemSpacing` → `contentContainerStyle={{ gap }}`; `keyExtractor` deliberately omitted (RN's index default is correct for static arrays — reasoning in nodes.ts).
+
+**Fixes found on the way**
+- jsx.ts fragment open tags rendered `<>>` (the generic `>` suffix applied to `<>`); arrow/jsx attr bodies joined with double indentation (renderElement lines already carry their own indent). Generated output re-validated with @babel/parser (full-file JSX parse OK).
+- RNW 0.21.4 ships Button/FlatList/SectionList/SafeAreaView/Touchables as real components — only the ambient .d.ts lacked them; extended `react-native-web.d.ts` from the dist flow types (same discipline as the original file).
+- `setNodeListRole` first draft guarded on the wrong side (child-is-list instead of parent-is-list) — caught by the new store tests.
+- Seed styles cleared `height` (the view entry's insert default 120 leaked into template cards).
+
+**Verification**
+- vitest **69/69** (49 existing + 20 new: bindings, impl-aware registry, store insertion, seed, and end-to-end emitter assertions on exact generated source). `tsc --noEmit` clean.
+- Live browser (agent-browser, DOM-level assertions — no VLM available in this session): toolbar carets + all variant menus; Flat List placed on canvas → 3 repeated rows with per-row bindings; array editor edit ("Item 1"→"Espresso") updates the canvas instantly; role switch to header renders once with the raw binding (honest); Code tab shows the live file — FlatList + data literal + `renderItem={({ item}) => (` + bound expressions; Safe Area View variant emits node-level SafeAreaView; RN Button variant renders a real RNW button; Section List variant renders per-section headers from `{section.header}`.
+- **Honest gaps documented, not hidden**: numColumns on the RNW canvas may not lay out as a grid (device-only behavior, previewNote + description state it); pull-to-refresh/refreshing and loading/error states need state — deferred to the events/data module (Phase 4) per the Phase 0 matrix; API data binding likewise (static local arrays ship now — the TravelMate pattern).
 
 ### ✔ 2026-11-02 — Phase 1: Open Pencil visual alignment + paint system (COMPLETE)
 
@@ -82,11 +117,11 @@
 
 ### Phase 1 — Visual improvements ✔ DONE (2026-11-02, see above) — incl. the user-added scope: canvas selection features (borders/points/alignment), Figma-like gradient color picking, theme variables (plain-TS, no NativeWind)
 
-### Phase 2 — Component insertion improvements
-Extend the EXISTING Add Element / registry / rendering infrastructure — no second component picker.
-- [ ] View options → Normal View / Safe Area View (via `react-native-safe-area-context`, never RN SafeAreaView) / ScrollView — creating the correct underlying components.
-- [ ] Lists: investigate why lists are inaccessible today; then support FlatList, SectionList, horizontal FlatList, grid-style FlatList, ScrollView-based manual lists. Configure: data source, item layout, spacing, headers, footers, separators, empty + loading states. Design ONE item, repeat with dynamic data.
-- [ ] Button implementation choice at insertion: Pressable (default) / TouchableOpacity / TouchableHighlight / RN Button — component-specific props, all connected to the existing interaction system (no duplicate engines).
+### Phase 2 — Component insertion improvements ✔ DONE (2026-11-02, see above)
+Extended the EXISTING Add Element / registry / rendering infrastructure — no second component picker.
+- [x] View options → Normal View / Safe Area View (via `react-native-safe-area-context`, never RN SafeAreaView) / ScrollView — creating the correct underlying components.
+- [x] Lists — were inaccessible because no list entries existed in the registry (the audit's finding); now: FlatList, SectionList, horizontal FlatList, grid FlatList, ScrollView-based manual lists. Configured: data source (static array editor), item layout (in-flow template + spacing), headers, footers, separators, empty states (roles). Design ONE item, repeat with dynamic data (bindings + real RNW FlatList/SectionList on canvas).
+- [x] Button implementation choice at insertion: Pressable (default) / TouchableOpacity / TouchableHighlight / RN Button — component-specific props, all connected to the existing interaction system (no duplicate engines).
 
 ### Phase 3 — Runtime bug fixes (no cosmetic delays)
 - [ ] **Tab-switch flicker in simulation.** Initial hypothesis (to verify): `screen-artboard.tsx` crossfades via `AnimatePresence` — during the 150ms transition BOTH layers are semi-transparent, so the screen background bleeds through (flash); plus full `ScreenTreePreview` remount on key change. Fix the underlying mechanism (fade only the incoming layer over an opaque outgoing one, or restructure the swap); preserve screen state per the navigation model.
@@ -114,3 +149,5 @@ Filled after the Phase 0 matrix; candidates already visible: flows/interactions 
 | 2026-11-02 | initial import (squash) | First push; `.env`/`upload/` de-tracked; pre-import history on local branch `history-backup-preimport`. |
 | 2026-11-02 | Phase 0 audit | implementation inventory + Open Pencil study + capability matrix. |
 | 2026-11-02 | Phase 1 | Open Pencil visual alignment + canvas selection features + gradient color picker + theme variables (see entry above). |
+| 2026-11-02 | restore after sandbox reset | Working tree re-cloned from origin/main; latent tsc error in tests/paint.test.ts fixed. |
+| 2026-11-02 | Phase 2 | Component insertion: impl-aware registry/codegen/inspector end-to-end; View 3 options; Button 4 implementations; Lists 5 forms + data sources + roles + bindings (see entry above). |

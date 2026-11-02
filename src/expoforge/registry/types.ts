@@ -66,6 +66,13 @@ export interface PropField {
   description?: string
   /** Control override: number → slider, string → textarea, enum → segmented. */
   control?: 'slider' | 'textarea' | 'segmented'
+  /**
+   * Phase 2: conditional visibility — the field only shows (inspector) when
+   * another prop of the SAME entry equals `equals` (e.g. numColumns only when
+   * horizontal=false). Codegen emitters apply the same guard so the two never
+   * drift. Absent = always visible.
+   */
+  visibleWhen?: { key: string; equals: unknown }
 }
 
 /** Normalize `options` to labeled option objects. */

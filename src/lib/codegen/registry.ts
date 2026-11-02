@@ -20,7 +20,7 @@
  */
 
 import { getEntry } from '@/expoforge/registry'
-import type { RegistryEntry } from '@/expoforge/registry'
+import { effectiveProps, resolveImplementation, type ComponentImplementation, type RegistryEntry } from '@/expoforge/registry'
 
 export type CodegenFieldType = 'text' | 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'object'
 
@@ -33,12 +33,14 @@ export interface CodegenField {
 /** Codegen view over one registry entry (or fallback mirror entry). */
 export interface NormalizedEntry {
   component: string
-  /** Special emitter id ('button' | 'divider' | 'lineargradient' | 'blurview'); defaults to the node type. */
+  /** Special emitter id ('button' | 'divider' | …); defaults to the node type. */
   emitter?: string
   importModule: string
   importNamed: string[]
   importDefault?: string
   fields: CodegenField[]
+  /** Phase 2: the active implementation id, when the entry has variants. */
+  impl?: string
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -72,19 +74,38 @@ function splitNames(body: string): string[] {
     .filter((s) => s.length > 0)
 }
 
-function normalize(reg: RegistryEntry): NormalizedEntry | null {
-  const parsed = parseImportLine(reg.codegen.import)
+function normalize(reg: RegistryEntry, implId?: string): NormalizedEntry | null {
+  // Phase 2 impl-awareness: when the entry declares variants and one is
+  // active, ITS import/component mapping and prop surface win (image's
+  // react-native variant now emits `react-native`'s Image instead of the
+  // entry-level expo-image default — the preview has branched on node.impl
+  // since v3; codegen now matches it exactly).
+  const impl = resolveImplementation(reg, implId)
+  const codegenSource = impl ?? reg
+  const parsed = parseImportLine(codegenSource.codegen.import)
   if (!parsed) return null // unparseable import line — nothing safe to register
   return {
-    component: reg.codegen.component,
-    emitter: reg.codegen.emitter,
+    component: codegenSource.codegen.component,
+    emitter: emitterOf(reg, impl),
     importModule: parsed.module,
     // Namespace import lines are normalized to the named form — a module
     // namespace object cannot be a JSX element type (see file header).
-    importNamed: parsed.namespace ? [reg.codegen.component] : parsed.named,
+    importNamed: parsed.namespace ? [codegenSource.codegen.component] : parsed.named,
     importDefault: parsed.default,
-    fields: reg.props.map((p) => ({ key: p.key, type: p.type as CodegenFieldType, default: p.default }))
+    fields: effectiveProps(reg, implId).map((p) => ({
+      key: p.key,
+      type: p.type as CodegenFieldType,
+      default: p.default
+    })),
+    ...(impl ? { impl: impl.id } : {})
   }
+}
+
+/* Keep the emitter resolution in one place: an implementation may override the
+ * entry-level emitter (ComponentImplementation.codegen.emitter); the entry
+ * level is the fallback. */
+function emitterOf(reg: RegistryEntry, impl: ComponentImplementation | null): string | undefined {
+  return (impl?.codegen.emitter ?? reg.codegen.emitter)
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -188,13 +209,14 @@ const FALLBACK: Record<string, NormalizedEntry> = {
 }
 
 /**
- * Resolve the codegen view for a component type. Never returns undefined —
- * unknown types degrade to a View container so the tree stays renderable.
+ * Resolve the codegen view for a component type (impl-aware when the entry
+ * declares variants). Never returns undefined — unknown types degrade to a
+ * View container so the tree stays renderable.
  */
-export function resolveEntry(type: string): NormalizedEntry {
+export function resolveEntry(type: string, impl?: string): NormalizedEntry {
   const reg = getEntry(type)
   if (reg) {
-    const n = normalize(reg)
+    const n = normalize(reg, impl)
     if (n) return n
   }
   return FALLBACK[type] ?? FALLBACK.__unknown

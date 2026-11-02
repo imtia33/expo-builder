@@ -49,6 +49,22 @@ function SingleFieldRow({ field, context }: { field: FieldSpec; context: RowCont
     )
   }
 
+  // Array editors (Phase 2 list data sources) are full-width blocks: their
+  // rows carry their own labels, and the section title above serves as the
+  // row label — squeezing them into the 64px label grid would truncate them.
+  if (field.kind === 'array-list') {
+    return (
+      <div className="pt-1">
+        <FieldControl
+          field={field}
+          onChange={(value) => onFieldChange(sectionId, field.id, value)}
+          onScrubStart={onScrubStart}
+          onScrubEnd={onScrubEnd}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className={gridStyles({ columns: 1, distribution: 'equal' })}>
       <label id={labelId} className={rowLabelClass}>

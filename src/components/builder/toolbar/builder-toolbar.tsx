@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { Tip } from './tip'
 import { ToolButton } from './tool-button'
 import { ToolFlyout } from './tool-flyout'
+import { VariantToolGroup } from './tool-variants'
 import {
   FIXED_TOOLS,
   fixedToolValue,
@@ -111,20 +112,26 @@ export function BuilderToolbar({ tool, onToolChange, className }: BuilderToolbar
         <FixedToolButton def={screen} tool={tool} onToolChange={onToolChange} />
 
         {/* Registry-driven component tools — skipped per type until the
-            registry fills in, so the divider only renders with content. */}
+            registry fills in, so the divider only renders with content.
+            Phase 2: tools with insertion options render the dual-button
+            [main][caret] group (VariantToolGroup); the rest stay plain. */}
         {pillTools.length > 0 ? (
           <>
             <div aria-hidden="true" className={PILL_DIVIDER} />
-            {pillTools.map((c) => (
-              <Tip key={c.type} label={toolTip(c.label, c.shortcut)}>
-                <ToolButton
-                  icon={c.icon}
-                  label={c.label}
-                  active={isComponentToolActive(tool, c.type)}
-                  onClick={() => onToolChange({ kind: 'component', type: c.type })}
-                />
-              </Tip>
-            ))}
+            {pillTools.map((c) =>
+              c.variants && c.variants.length > 0 ? (
+                <VariantToolGroup key={c.type} def={c} tool={tool} onSelect={onToolChange} />
+              ) : (
+                <Tip key={c.type} label={toolTip(c.label, c.shortcut)}>
+                  <ToolButton
+                    icon={c.icon}
+                    label={c.label}
+                    active={isComponentToolActive(tool, c.type)}
+                    onClick={() => onToolChange({ kind: 'component', type: c.type })}
+                  />
+                </Tip>
+              )
+            )}
           </>
         ) : null}
 

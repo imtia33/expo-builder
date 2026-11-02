@@ -20,6 +20,7 @@ import { getEntry } from '@/expoforge/registry'
 import { useCanvasViewport } from '@/lib/canvas/viewport-store'
 import { useProjectStore } from '@/lib/project/store'
 import { deviceById } from '@/components/builder/screens/device-presets'
+import { seedListItemTemplate } from './list-insert'
 
 import {
   artboardElementOf,
@@ -69,6 +70,15 @@ function toLocal(el: HTMLElement, clientX: number, clientY: number): { x: number
   }
 }
 
+/** What the placement path needs to know about the inserted component. */
+export interface PlaceComponentSpec {
+  type: string
+  /** Implementation variant (Phase 2: view → 'safe-area', button impls). */
+  impl?: string
+  /** Insert-time prop overrides (Phase 2 list forms: horizontal, grid…). */
+  props?: Record<string, unknown>
+}
+
 /**
  * Place one component at a viewport point. `canvasPoint` is the click in
  * canvas space (used when a NEW screen must be created on bare canvas).
@@ -76,7 +86,7 @@ function toLocal(el: HTMLElement, clientX: number, clientY: number): { x: number
  * the store's insertNode.
  */
 export function placeComponent(
-  type: string,
+  spec: PlaceComponentSpec,
   clientX: number,
   clientY: number,
   canvasPoint: { x: number; y: number }
@@ -84,9 +94,9 @@ export function placeComponent(
   const store = useProjectStore.getState()
   if (store.sim.on) return { ok: false }
 
-  const entry = getEntry(type)
+  const entry = getEntry(spec.type)
   if (!entry) {
-    console.warn(`[canvas] cannot place unknown component type: ${type}`)
+    console.warn(`[canvas] cannot place unknown component type: ${spec.type}`)
     return { ok: false }
   }
 
@@ -101,9 +111,11 @@ export function placeComponent(
       const device = deviceById(created?.deviceId ?? store.ui.lastDeviceId)
       const w = entry.insert.width
       const h = entry.insert.height
-      store.insertNode({
+      const listId = store.insertNode({
         screenId,
-        type,
+        type: spec.type,
+        impl: spec.impl,
+        props: spec.props,
         parentId: null,
         rect: {
           left: Math.max(0, Math.round((device.width - w) / 2)),
@@ -112,6 +124,7 @@ export function placeComponent(
           height: h
         }
       })
+      seedListItemTemplate(listId)
       return { ok: true, screenId }
     } finally {
       store.endGesture()
@@ -126,12 +139,24 @@ export function placeComponent(
   const left = clamp(local.x - w / 2, 0, Math.max(0, local.width - w))
   const top = h === undefined ? Math.max(0, local.y) : clamp(local.y - h / 2, 0, Math.max(0, local.height - h))
 
-  store.insertNode({
-    screenId,
-    type,
-    parentId: container.parentId,
-    rect: { left: Math.round(left), top: Math.round(top), width: w, height: h }
-  })
+  // One gesture: the insert + any list-template seeding (Phase 2) land as ONE
+  // undo entry; a single-commit gesture is identical to before (no change in
+  // undo granularity for plain components).
+  store.beginGesture()
+  let nodeId: string
+  try {
+    nodeId = store.insertNode({
+      screenId,
+      type: spec.type,
+      impl: spec.impl,
+      props: spec.props,
+      parentId: container.parentId,
+      rect: { left: Math.round(left), top: Math.round(top), width: w, height: h }
+    })
+    seedListItemTemplate(nodeId)
+  } finally {
+    store.endGesture()
+  }
   return { ok: true, screenId }
 }
 

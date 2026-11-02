@@ -7,7 +7,57 @@
  *  - Text  → text-children prop + real typography behavior props + a callback
  *            prop (shown as code-controlled in the inspector, never faked)
  */
-import type { RegistryEntry } from './types'
+import type { ComponentImplementation, RegistryEntry } from './types'
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * View implementations (Phase 2 — insertion options for the View tool).
+ *
+ * The exemplar entry now also demonstrates implementation switching: the same
+ * logical View exists as the plain RN View (default, unchanged for every
+ * existing project) and as react-native-safe-area-context's SafeAreaView —
+ * the ONLY SafeAreaView the builder ever creates (RN core's SafeAreaView is
+ * deprecated and never emitted; the screen-level wrapper already uses this
+ * package, so no new dependency). Ordering matters: the FIRST variant is the
+ * default for nodes without an explicit impl.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const VIEW_IMPLEMENTATIONS: ComponentImplementation[] = [
+  {
+    id: 'view',
+    label: 'View',
+    kind: 'native',
+    description: 'The core layout container. Children can be placed, moved and resized freely.',
+    props: [],
+    codegen: { import: "import { View } from 'react-native'", component: 'View' }
+  },
+  {
+    id: 'safe-area',
+    label: 'SafeAreaView',
+    kind: 'native',
+    description:
+      'react-native-safe-area-context SafeAreaView — the subtree respects the device insets. Insets apply on device; the canvas shows a plain container (web insets are zero).',
+    props: [
+      {
+        key: 'edges',
+        label: 'Edges',
+        type: 'enum',
+        options: [
+          { value: 'all', label: 'All edges' },
+          { value: 'top-bottom', label: 'Top + bottom' },
+          { value: 'top', label: 'Top only' },
+          { value: 'bottom', label: 'Bottom only' }
+        ],
+        default: 'all',
+        section: 'Behavior',
+        description: 'Which device insets the subtree avoids. All = the package default (nothing is emitted).'
+      }
+    ],
+    codegen: {
+      import: "import { SafeAreaView } from 'react-native-safe-area-context'",
+      component: 'SafeAreaView'
+    }
+  }
+]
 
 export const VIEW_ENTRY: RegistryEntry = {
   id: 'view',
@@ -59,6 +109,7 @@ export const VIEW_ENTRY: RegistryEntry = {
     }
   ],
   styleSections: ['layout', 'spacing', 'appearance', 'effects'],
+  implementations: VIEW_IMPLEMENTATIONS,
   codegen: { import: "import { View } from 'react-native'", component: 'View' },
   previewNote: 'Rendered live by react-native-web.'
 }

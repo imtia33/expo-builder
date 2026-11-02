@@ -24,6 +24,7 @@ import { useProjectStore } from '@/lib/project/store'
 import { cn } from '@/lib/utils'
 import { tv } from 'tailwind-variants'
 import { NAV_ICON, NAV_LABEL, SCREEN_ICON } from './kind-icons'
+import { isListEntryType, LIST_ROLE_LABEL } from '@/lib/lists/bindings'
 import { nodeDisplayName, nodeIconSlot } from './tree-model'
 import hierarchyTreeTheme from './tree-theme'
 import type { DropZone, TreeRow as Row } from './types'
@@ -325,12 +326,19 @@ function NodeRowContent({
   visuals: RowVisuals
 }) {
   const node = useProjectStore((s) => s.data.nodes[row.id])
+  const parent = useProjectStore((s) => (row.id ? s.data.nodes[s.data.nodes[row.id]?.parentId ?? ''] ?? null : null))
   const toggleNodeHidden = useProjectStore((s) => s.toggleNodeHidden)
   const deleteNode = useProjectStore((s) => s.deleteNode)
   if (!node) return null
 
   const label = nodeDisplayName(node)
   const hidden = Boolean(node.hidden)
+  // List role chip (Phase 2): non-item roles get a muted tag so list chrome
+  // reads at a glance in the tree (item = the default template, no chip).
+  const roleLabel =
+    parent && isListEntryType(parent.type) && node.listRole && node.listRole !== 'item'
+      ? LIST_ROLE_LABEL[node.listRole]
+      : null
 
   return (
     <RowShell
@@ -343,6 +351,11 @@ function NodeRowContent({
     >
       <span className={treeStyles.label()}>
         <span className="min-w-0 truncate">{label}</span>
+        {roleLabel ? (
+          <span className="ml-1 shrink-0 rounded bg-panel-field px-1 py-px text-[10px] leading-4 text-muted">
+            {roleLabel}
+          </span>
+        ) : null}
       </span>
       <div className={treeStyles.actions({ actionsVisible: false })}>
         <button

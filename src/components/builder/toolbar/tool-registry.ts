@@ -64,24 +64,77 @@ export interface ComponentTool {
   label: string
   shortcut?: string
   keys?: string
+  /**
+   * Phase 2 insertion options: when present, the pill renders the open-pencil
+   * dual-button form [main][caret] and the caret opens a variant menu. The
+   * main click inserts the DEFAULT variant (unchanged behavior); menu items
+   * carry the variant's impl/props/type.
+   */
+  variants?: readonly ToolVariant[]
 }
 
-/** Pill order from the task spec: Text, View, Button, Input, Image. */
-const PILL_ORDER = ['text', 'view', 'button', 'textinput', 'image'] as const
+/** One insertion option of a component tool (Phase 2). */
+export interface ToolVariant {
+  /** Stable id (memory radio value), e.g. 'safe-area', 'grid'. */
+  id: string
+  label: string
+  /** Editor icon slot for the menu item. */
+  icon: IconSlot
+  /** Component type to insert (defaults to the tool's type — cross-type
+   *  variants: View→ScrollView, List→SectionList). */
+  type?: string
+  /** Implementation variant id (registry implementations[]). */
+  impl?: string
+  /** Insert-time prop overrides (e.g. horizontal FlatList form). */
+  props?: Record<string, unknown>
+  /** One-line menu hint under the label. */
+  hint?: string
+}
+
+/** Pill order from the task spec: Text, View, Button, Input, Image — plus the
+ * Phase 2 List tool (insertion options for lists; Figma-style tool placement). */
+const PILL_ORDER = ['text', 'view', 'button', 'textinput', 'image', 'flatlist'] as const
 
 /** Flyout order is the registry's locked list. */
 const FLYOUT_ORDER: readonly string[] = REGISTRY_FLYOUT_ORDER
 
-/**
- * Curated presentation per registry type: label overrides the spec fixes
- * verbatim and the letter keys (V/H/S are fixed; T/B/I live here). Icons come
+/** Curated presentation per registry type: label overrides the spec fixes
+ * verbatim and the letter keys (V/H/S are fixed; T/B/I/L live here). Icons come
  * from the shared layerIconSlot table (one glyph per component everywhere:
  * toolbar pill, flyout, tree rows), falling back to the generic layer slot.
- */
-const PRESENTATION: Record<string, { label?: string; shortcut?: string; keys?: string }> = {
+ * Phase 2: view/button/flatlist gain insertion-option menus (variants). */
+const PRESENTATION: Record<string, { label?: string; shortcut?: string; keys?: string; variants?: ToolVariant[] }> = {
   text: { shortcut: 'T', keys: 't' },
-  view: { shortcut: 'B', keys: 'b' },
+  view: {
+    shortcut: 'B',
+    keys: 'b',
+    variants: [
+      { id: 'view', label: 'View', icon: 'tool.view', hint: 'The core layout container' },
+      { id: 'safe-area', label: 'Safe Area View', icon: 'tool.safearea', impl: 'safe-area', hint: 'react-native-safe-area-context SafeAreaView' },
+      { id: 'scrollview', label: 'Scroll View', icon: 'tool.scrollview', type: 'scrollview', hint: 'Scrolling container' }
+    ]
+  },
+  button: {
+    variants: [
+      { id: 'pressable', label: 'Pressable', icon: 'tool.button', hint: 'Default — fully styleable composite' },
+      { id: 'touchableopacity', label: 'TouchableOpacity', icon: 'tool.button-opacity', impl: 'touchableopacity', hint: 'Dims while pressed (activeOpacity)' },
+      { id: 'touchablehighlight', label: 'TouchableHighlight', icon: 'tool.button-highlight', impl: 'touchablehighlight', hint: 'Underlay color while pressed' },
+      { id: 'rnbutton', label: 'RN Button', icon: 'tool.button-rn', impl: 'rnbutton', hint: 'Core platform-styled button' }
+    ]
+  },
   textinput: { shortcut: 'I', keys: 'i' },
+  flatlist: {
+    label: 'List',
+    shortcut: 'L',
+    keys: 'l',
+    variants: [
+      { id: 'flatlist', label: 'Flat List', icon: 'tool.list', hint: 'Vertical repeating list' },
+      { id: 'horizontal', label: 'Horizontal Flat List', icon: 'tool.list-horizontal', props: { horizontal: true }, hint: 'Carousel / chips row' },
+      { id: 'grid', label: 'Grid Flat List', icon: 'tool.list-grid', props: { numColumns: 2 }, hint: 'numColumns=2 grid' },
+      { id: 'sectionlist', label: 'Section List', icon: 'tool.sectionlist', type: 'sectionlist', hint: 'Grouped rows with section headers' },
+      { id: 'manual', label: 'Manual list (ScrollView)', icon: 'tool.scrollview', type: 'scrollview', hint: 'Rows you place yourself — no data source' }
+    ]
+  },
   lineargradient: { label: 'Linear gradient' },
   blurview: { label: 'Blur view' },
   activityindicator: { label: 'Activity indicator' }
@@ -97,7 +150,8 @@ function toComponentTool(type: string): ComponentTool | null {
     icon: layerIconSlot(type),
     label: p?.label ?? entry.name,
     shortcut: p?.shortcut,
-    keys: p?.keys
+    keys: p?.keys,
+    variants: p?.variants
   }
 }
 
